@@ -466,7 +466,7 @@ export default function LandingPage() {
         {/* Top text - centered above form */}
         <header className="mb-8 w-full text-center">
           <h1 className="register-headline">
-            USD Law Quiz - test your legal knowledge and climb the leaderboard
+            USD Law Quiz
           </h1>
         </header>
 
