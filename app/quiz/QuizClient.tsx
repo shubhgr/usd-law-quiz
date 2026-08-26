@@ -127,12 +127,11 @@ export default function QuizClient({ email }: { email: string }) {
   const [questionIndex, setQuestionIndex] = useState(0);
   const [deadlineAt, setDeadlineAt] = useState<string | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
-  const [saving, setSaving] = useState(false);
 
   const tabCountRef = useRef(0);
   const pendingTabWarningRef = useRef(false);
   const submittingRef = useRef(false);
-  const savingRef = useRef(false);
+  const inFlightIndexRef = useRef<number | null>(null);
   const deadlineRef = useRef<string | null>(null);
   const questionIndexRef = useRef(0);
   const answersRef = useRef(answers);
@@ -342,25 +341,58 @@ export default function QuizClient({ email }: { email: string }) {
     [finishQuiz]
   );
 
+  const advanceOptimistically = useCallback((fromIndex: number) => {
+    const nextIndex = fromIndex + 1;
+    timedOutForIndexRef.current = null;
+    if (nextIndex >= TOTAL_QUESTIONS) {
+      // Final question — wait for server score before leaving (handled by caller).
+      return { done: true as const, nextIndex };
+    }
+    const localDeadline = new Date(
+      Date.now() + QUESTION_TIME_LIMIT_SECONDS * 1000
+    ).toISOString();
+    setQuestionIndex(nextIndex);
+    questionIndexRef.current = nextIndex;
+    setDeadlineAt(localDeadline);
+    deadlineRef.current = localDeadline;
+    setRemainingSeconds(QUESTION_TIME_LIMIT_SECONDS);
+    return { done: false as const, nextIndex };
+  }, []);
+
   const submitCurrentQuestion = useCallback(
     async (opts: { timedOut: boolean; answerOverride?: string }) => {
-      if (savingRef.current || submittingRef.current) return;
+      if (submittingRef.current) return;
       const index = questionIndexRef.current;
       const q = questions[index];
       if (!q) return;
+      if (inFlightIndexRef.current === index) return;
 
       const apiPid = loadSession()?.pid ?? pid;
       const apiToken = loadSession()?.token ?? token;
       if (!apiPid || !apiToken) return;
 
-      savingRef.current = true;
-      setSaving(true);
-      setSaveError("");
-
       const answerValue =
         opts.answerOverride !== undefined
           ? opts.answerOverride
           : answersRef.current[q.id] ?? "";
+
+      // Persist locally and move on immediately — don't wait on the network.
+      const session = loadSession();
+      if (session) {
+        const nextAnswers = { ...session.answers };
+        nextAnswers[q.id] = normalizeChoice(answerValue);
+        saveSession({
+          ...session,
+          answers: nextAnswers,
+          syncedAnswerString: allAnswersString(nextAnswers),
+        });
+        setAnswers(nextAnswers);
+        answersRef.current = nextAnswers;
+      }
+
+      const optimistic = advanceOptimistically(index);
+      inFlightIndexRef.current = index;
+      setSaveError("");
 
       try {
         const res = await fetch("/api/progress", {
@@ -395,7 +427,6 @@ export default function QuizClient({ email }: { email: string }) {
 
         if (!res.ok) {
           setSaveError(body.error ?? "Could not save answer. Retrying…");
-          // On conflict with current question, re-fetch question-start.
           if (res.status === 409) {
             const qs = await fetch("/api/question-start", {
               method: "POST",
@@ -435,28 +466,54 @@ export default function QuizClient({ email }: { email: string }) {
           return;
         }
 
-        const session = loadSession();
-        if (session) {
-          const nextAnswers = { ...session.answers };
-          nextAnswers[q.id] = normalizeChoice(answerValue);
-          saveSession({
-            ...session,
-            answers: nextAnswers,
-            syncedAnswerString: allAnswersString(nextAnswers),
-          });
-          setAnswers(nextAnswers);
-          answersRef.current = nextAnswers;
+        if (body.completed || optimistic.done) {
+          if (body.completed) {
+            applyAdvance(body);
+          } else {
+            const sub = await fetch("/api/submit", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pid: apiPid, token: apiToken }),
+            });
+            if (sub.ok) {
+              const sb = (await sub.json()) as {
+                totalScore?: number;
+                completionTimeSeconds?: number;
+                completedAt?: string | null;
+              };
+              finishQuiz(sb);
+            } else {
+              applyAdvance(body);
+            }
+          }
+          return;
         }
 
-        applyAdvance(body);
+        // Sync server deadline onto the question we already showed.
+        if (
+          typeof body.nextQuestionIndex === "number" &&
+          body.nextQuestionIndex === questionIndexRef.current &&
+          body.deadlineAt
+        ) {
+          setDeadlineAt(body.deadlineAt);
+          deadlineRef.current = body.deadlineAt;
+          setRemainingSeconds(
+            typeof body.remainingMs === "number"
+              ? Math.ceil(body.remainingMs / 1000)
+              : remainingSecondsUntil(body.deadlineAt)
+          );
+        } else if (typeof body.nextQuestionIndex === "number") {
+          applyAdvance(body);
+        }
       } catch {
-        setSaveError("Network error. Please try again.");
+        setSaveError("Network error — your answer is saved locally.");
       } finally {
-        savingRef.current = false;
-        setSaving(false);
+        if (inFlightIndexRef.current === index) {
+          inFlightIndexRef.current = null;
+        }
       }
     },
-    [pid, token, applyAdvance, finishQuiz]
+    [pid, token, applyAdvance, finishQuiz, advanceOptimistically]
   );
 
   useEffect(() => {
@@ -834,7 +891,7 @@ export default function QuizClient({ email }: { email: string }) {
       if (
         remaining <= 0 &&
         timedOutForIndexRef.current !== index &&
-        !savingRef.current &&
+        inFlightIndexRef.current !== index &&
         !submittingRef.current
       ) {
         timedOutForIndexRef.current = index;
@@ -956,7 +1013,9 @@ export default function QuizClient({ email }: { email: string }) {
 
   const answer = useCallback(
     (questionId: string, option: string) => {
-      if (savingRef.current || submittingRef.current) return;
+      if (submittingRef.current) return;
+      const index = questionIndexRef.current;
+      if (inFlightIndexRef.current === index) return;
       const question = questions.find((item) => item.id === questionId);
       if (!question) return;
       const need = selectCountFor(question);
@@ -1089,9 +1148,7 @@ export default function QuizClient({ email }: { email: string }) {
   const selected = answers[q.id] ?? "";
   const need = selectCountFor(q);
   const picked = normalizeChoice(selected).length;
-  const progressPct = Math.round(
-    ((questionIndex + (saving ? 0.5 : 0)) / TOTAL_QUESTIONS) * 100
-  );
+  const progressPct = Math.round(((questionIndex + 1) / TOTAL_QUESTIONS) * 100);
   const activeTabWarning = tabSwitchWarning(tabLeaveCount);
   const urgent =
     remainingSeconds !== null && remainingSeconds <= 5;
@@ -1199,7 +1256,6 @@ export default function QuizClient({ email }: { email: string }) {
                         type="button"
                         role={need > 1 ? "checkbox" : "radio"}
                         aria-checked={isSelected}
-                        disabled={saving}
                         onClick={() => answer(q.id, key)}
                         className={`quiz-option ${
                           isSelected ? "quiz-option-selected" : ""
@@ -1222,9 +1278,6 @@ export default function QuizClient({ email }: { email: string }) {
           <p className="relative mt-4 rounded-lg border border-red-500/30 bg-red-950/60 px-3 py-2 text-sm text-red-300">
             {saveError}
           </p>
-        )}
-        {saving && (
-          <p className="mt-3 text-center text-sm text-slate-400">Saving…</p>
         )}
       </main>
     </div>
