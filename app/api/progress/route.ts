@@ -435,29 +435,37 @@ export async function POST(request: Request) {
       );
     }
 
+    // Legacy beacon sync: only upsert non-empty slots. Never treat a full
+    // empty pipe string ("|||...|") as "all questions timed out / complete"
+    // (that was auto-finishing the quiz right after registration).
     const parts = splitAnswerString(normalized);
+    const existingMap = await loadResponseMap(pid);
+    let wroteAny = false;
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
       if (!q) break;
-      const existingMap = await loadResponseMap(pid);
       if (q.id in existingMap) continue;
       const slot = parts[i] ?? "";
-      // Only write slots we know about from the pipe string (including empties once past first non-empty? - write all provided slots)
-      if (i >= parts.length && !slot) continue;
+      if (!slot) continue;
       await upsertQuestionResponse({
         pid,
         questionId: q.id,
         answer: slot,
-        timedOut: !slot,
+        timedOut: false,
         timeTakenMs: null,
         answeredAt: now,
       });
+      wroteAny = true;
     }
 
     const answerStr = await rebuildAnswersBlob(pid);
-    void gasSaveAnswers({ pid, answers: answerStr }).catch(() => undefined);
+    if (wroteAny) {
+      void gasSaveAnswers({ pid, answers: answerStr }).catch(() => undefined);
+    }
 
-    if (isAnswerStringComplete(answerStr) || parts.length >= questions.length) {
+    // Finalize only when every question has a real answered choice.
+    // Empty pipe padding must never complete the quiz.
+    if (isAnswerStringComplete(answerStr)) {
       const result = await finalizeAttempt(pid, now);
       return NextResponse.json({
         ok: true,

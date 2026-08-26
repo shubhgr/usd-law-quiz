@@ -90,18 +90,31 @@ function syncUrlEmail(email: string) {
   }
 }
 
+/** True when the user has touched at least one question (incl. blank timeout). */
+function hasQuestionProgress(answers: Record<string, string> | undefined): boolean {
+  return Boolean(answers && Object.keys(answers).length > 0);
+}
+
 function pendingWork(session: ReturnType<typeof loadSession>): boolean {
   if (!session) return false;
   if (!session.registered) return true;
 
-  const answerStr = allAnswersString(session.answers);
-  if (answerStr && answerStr !== session.syncedAnswerString) return true;
+  // allAnswersString({}) is a full empty pipe string - do not treat that as
+  // pending progress (it used to auto-complete the quiz on register).
+  if (
+    hasQuestionProgress(session.answers) &&
+    allAnswersString(session.answers) !== session.syncedAnswerString
+  ) {
+    return true;
+  }
 
   return session.completed && !session.submitted;
 }
 
 async function syncAnswers(session: ReturnType<typeof loadSession>) {
   if (!session) return false;
+
+  if (!hasQuestionProgress(session.answers)) return true;
 
   const answerStr = allAnswersString(session.answers);
   if (!answerStr || answerStr === session.syncedAnswerString) return true;
@@ -216,8 +229,10 @@ async function runOnce(): Promise<void> {
   session = loadSession();
   if (!session?.registered) return;
 
-  const answerStr = allAnswersString(session.answers);
-  if (answerStr && answerStr !== session.syncedAnswerString) {
+  if (
+    hasQuestionProgress(session.answers) &&
+    allAnswersString(session.answers) !== session.syncedAnswerString
+  ) {
     await syncAnswers(session);
     return;
   }
@@ -369,15 +384,17 @@ export function flushPendingOnUnload(): void {
     return;
   }
 
-  const answerStr = allAnswersString(session.answers);
-  if (answerStr && answerStr !== session.syncedAnswerString) {
+  if (
+    hasQuestionProgress(session.answers) &&
+    allAnswersString(session.answers) !== session.syncedAnswerString
+  ) {
     try {
       navigator.sendBeacon(
         "/api/progress",
         blobOf({
           pid: session.pid,
           token: session.token,
-          answers: answerStr,
+          answers: allAnswersString(session.answers),
         })
       );
     } catch {

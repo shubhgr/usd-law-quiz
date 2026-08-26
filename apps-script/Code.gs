@@ -161,14 +161,12 @@ function ensureHeader(sheet, headers) {
 
 function findRow(sheet, col, value) {
   var data = sheet.getDataRange().getValues();
-  var needle = String(value).toLowerCase();
+  var needle = String(value).toLowerCase().replace(/,/g, "-");
   for (var i = 1; i < data.length; i++) {
     var cell = data[i][col - 1];
-    if (
-      cell !== null &&
-      cell !== undefined &&
-      String(cell).toLowerCase() === needle
-    ) {
+    if (cell === null || cell === undefined) continue;
+    var hay = String(cell).toLowerCase().replace(/,/g, "-");
+    if (hay === needle) {
       return { row: i + 1, values: data[i] };
     }
   }
@@ -268,6 +266,7 @@ function actionRegister(params) {
   }
 
   var utmVals = utmRowValues(params);
+  sheet.getRange("A:A").setNumberFormat("@");
   sheet.appendRow([
     pid,
     String(params.name || ""),
@@ -317,6 +316,16 @@ function actionRegister(params) {
  * Does NOT compute scores.
  */
 function actionSaveAnswers(params) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    return actionSaveAnswersLocked(params);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function actionSaveAnswersLocked(params) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var pid = String(params.pid || "");
   if (!pid) {
@@ -330,6 +339,7 @@ function actionSaveAnswers(params) {
   var now = new Date();
 
   var respSheet = ss.getSheetByName("Responses");
+  respSheet.getRange("A:A").setNumberFormat("@");
   var resp = findRow(respSheet, 1, pid);
   var scoreVal =
     params.score !== undefined && params.score !== ""
@@ -354,7 +364,10 @@ function actionSaveAnswers(params) {
       timeVal === "" || isNaN(timeVal) ? "" : timeVal,
       completedVal || "",
     ]);
+    // Force pid cell as plain text after append.
+    respSheet.getRange(respSheet.getLastRow(), 1).setNumberFormat("@").setValue(pid);
   } else {
+    respSheet.getRange(resp.row, 1).setNumberFormat("@").setValue(pid);
     respSheet.getRange(resp.row, 2).setValue(name);
     respSheet.getRange(resp.row, 3).setValue(email);
     respSheet.getRange(resp.row, 4).setValue(answers);
@@ -404,6 +417,16 @@ function actionSaveAnswers(params) {
  * Store final score fields sent by backend. Does NOT score answers.
  */
 function actionSubmit(params) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    return actionSubmitLocked(params);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function actionSubmitLocked(params) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var pid = String(params.pid || "");
   if (!pid) {
@@ -430,6 +453,7 @@ function actionSubmit(params) {
   var email = String(params.email || (reg ? reg.values[2] : "") || "").toLowerCase();
 
   var respSheet = ss.getSheetByName("Responses");
+  respSheet.getRange("A:A").setNumberFormat("@");
   var resp = findRow(respSheet, 1, pid);
   var already = false;
 
@@ -446,6 +470,7 @@ function actionSubmit(params) {
       };
     }
     if (answers !== null) respSheet.getRange(resp.row, 4).setValue(answers);
+    respSheet.getRange(resp.row, 1).setNumberFormat("@").setValue(pid);
     respSheet.getRange(resp.row, 2).setValue(name);
     respSheet.getRange(resp.row, 3).setValue(email);
     respSheet.getRange(resp.row, 5).setValue(totalScore);
@@ -461,6 +486,7 @@ function actionSubmit(params) {
       completionTimeSeconds,
       completedAt,
     ]);
+    respSheet.getRange(respSheet.getLastRow(), 1).setNumberFormat("@").setValue(pid);
   }
 
   if (reg) {
