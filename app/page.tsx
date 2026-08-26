@@ -15,6 +15,7 @@ import {
   attributionForRegister,
   captureLandingAttribution,
 } from "@/lib/utm";
+import { MINIMAL_REGISTER_FORM } from "@/lib/config";
 
 const PHONE_MIN_DIGITS = 10;
 const PHONE_MAX_DIGITS = 12;
@@ -68,10 +69,13 @@ export default function LandingPage() {
 
     const fullName = `${firstName} ${lastName}`.trim();
     const normalizedEmail = email.trim().toLowerCase();
-    const phoneDigits = digitsOnly(phone);
+    const phoneDigits = MINIMAL_REGISTER_FORM
+      ? "0000000000"
+      : digitsOnly(phone);
     if (
-      phoneDigits.length < PHONE_MIN_DIGITS ||
-      phoneDigits.length > PHONE_MAX_DIGITS
+      !MINIMAL_REGISTER_FORM &&
+      (phoneDigits.length < PHONE_MIN_DIGITS ||
+        phoneDigits.length > PHONE_MAX_DIGITS)
     ) {
       const message = "Phone number must be 10 to 12 digits.";
       setError(message);
@@ -103,12 +107,18 @@ export default function LandingPage() {
         name: fullName,
         email: normalizedEmail,
         phone: phoneDigits,
-        linkedinUrl: linkedInUrl,
-        collegeName,
+        linkedinUrl: MINIMAL_REGISTER_FORM ? "" : linkedInUrl,
+        collegeName: MINIMAL_REGISTER_FORM
+          ? "Test College"
+          : collegeName,
         bestDescribeYou: "",
-        considerMasters,
-        planningYear,
-        interestsMost,
+        considerMasters: MINIMAL_REGISTER_FORM
+          ? "Not currently"
+          : considerMasters,
+        planningYear: MINIMAL_REGISTER_FORM ? "Not decided" : planningYear,
+        interestsMost: MINIMAL_REGISTER_FORM
+          ? "Just curious to see what the challenge is about"
+          : interestsMost,
         ...attributionForRegister(),
       };
 
@@ -120,12 +130,12 @@ export default function LandingPage() {
         phone: phoneDigits,
         workExperience: "",
         domain: "",
-        linkedinUrl: linkedInUrl,
-        collegeName,
+        linkedinUrl: registerPayload.linkedinUrl,
+        collegeName: registerPayload.collegeName,
         bestDescribeYou: "",
-        considerMasters,
-        planningYear,
-        interestsMost,
+        considerMasters: registerPayload.considerMasters,
+        planningYear: registerPayload.planningYear,
+        interestsMost: registerPayload.interestsMost,
         registeredAt: Date.now(),
         registered: false,
         answers: {},
@@ -226,12 +236,12 @@ export default function LandingPage() {
               phone: phoneDigits,
               workExperience: "",
               domain: "",
-              linkedinUrl: linkedInUrl,
-              collegeName,
+              linkedinUrl: registerPayload.linkedinUrl,
+              collegeName: registerPayload.collegeName,
               bestDescribeYou: "",
-              considerMasters,
-              planningYear,
-              interestsMost,
+              considerMasters: registerPayload.considerMasters,
+              planningYear: registerPayload.planningYear,
+              interestsMost: registerPayload.interestsMost,
               registeredAt: Date.now(),
               registered: true,
               answers: {},
@@ -287,12 +297,12 @@ export default function LandingPage() {
         phone: phoneDigits,
         workExperience: "",
         domain: "",
-        linkedinUrl: linkedInUrl,
-        collegeName,
+        linkedinUrl: registerPayload.linkedinUrl,
+        collegeName: registerPayload.collegeName,
         bestDescribeYou: "",
-        considerMasters,
-        planningYear,
-        interestsMost,
+        considerMasters: registerPayload.considerMasters,
+        planningYear: registerPayload.planningYear,
+        interestsMost: registerPayload.interestsMost,
         registeredAt: Date.now(),
         registered: true,
         answers: {},
@@ -512,7 +522,7 @@ export default function LandingPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {MINIMAL_REGISTER_FORM ? (
                 <input
                   id="email"
                   type="email"
@@ -522,48 +532,62 @@ export default function LandingPage() {
                   className="register-input"
                   placeholder="Email*"
                 />
-                <input
-                  id="phone"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="tel"
-                  required
-                  minLength={PHONE_MIN_DIGITS}
-                  maxLength={PHONE_MAX_DIGITS}
-                  pattern="[0-9]{10,12}"
-                  title="Enter 10 to 12 digits"
-                  value={phone}
-                  onChange={(e) => setPhone(digitsOnly(e.target.value))}
-                  onBeforeInput={(e) => {
-                    const data = (e as unknown as InputEvent).data;
-                    if (data && /\D/.test(data)) e.preventDefault();
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.ctrlKey || e.metaKey || e.altKey) return;
-                    const allowed = [
-                      "Backspace",
-                      "Delete",
-                      "Tab",
-                      "Escape",
-                      "Enter",
-                      "ArrowLeft",
-                      "ArrowRight",
-                      "Home",
-                      "End",
-                    ];
-                    if (allowed.includes(e.key)) return;
-                    if (!/^\d$/.test(e.key)) e.preventDefault();
-                  }}
-                  onPaste={(e) => {
-                    e.preventDefault();
-                    const text = e.clipboardData.getData("text");
-                    setPhone(digitsOnly(`${phone}${text}`));
-                  }}
-                  className="register-input"
-                  placeholder="Phone Number*"
-                />
-              </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <input
+                    id="email"
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="register-input"
+                    placeholder="Email*"
+                  />
+                  <input
+                    id="phone"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="tel"
+                    required
+                    minLength={PHONE_MIN_DIGITS}
+                    maxLength={PHONE_MAX_DIGITS}
+                    pattern="[0-9]{10,12}"
+                    title="Enter 10 to 12 digits"
+                    value={phone}
+                    onChange={(e) => setPhone(digitsOnly(e.target.value))}
+                    onBeforeInput={(e) => {
+                      const data = (e as unknown as InputEvent).data;
+                      if (data && /\D/.test(data)) e.preventDefault();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.ctrlKey || e.metaKey || e.altKey) return;
+                      const allowed = [
+                        "Backspace",
+                        "Delete",
+                        "Tab",
+                        "Escape",
+                        "Enter",
+                        "ArrowLeft",
+                        "ArrowRight",
+                        "Home",
+                        "End",
+                      ];
+                      if (allowed.includes(e.key)) return;
+                      if (!/^\d$/.test(e.key)) e.preventDefault();
+                    }}
+                    onPaste={(e) => {
+                      e.preventDefault();
+                      const text = e.clipboardData.getData("text");
+                      setPhone(digitsOnly(`${phone}${text}`));
+                    }}
+                    className="register-input"
+                    placeholder="Phone Number*"
+                  />
+                </div>
+              )}
 
+              {!MINIMAL_REGISTER_FORM && (
+                <>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <label htmlFor="collegeName" className="register-label">
@@ -691,6 +715,8 @@ export default function LandingPage() {
                   className="register-input"
                 />
               </div>
+                </>
+              )}
 
               {error && (
                 <p className="rounded-lg border border-red-500/30 bg-red-950/60 px-3 py-2 text-sm text-red-300">

@@ -4,6 +4,7 @@ import { allAnswersString } from "./quizScreens";
 import { isAnswerSetComplete, isAnswerStringComplete } from "./answerString";
 import { attributionForRegister } from "./utm";
 import { showToast } from "./toast";
+import { MINIMAL_REGISTER_FORM } from "./config";
 
 const POST_ATTEMPTS = 2;
 const POST_RETRY_DELAY_MS = 500;
@@ -153,16 +154,26 @@ async function runOnce(): Promise<void> {
       pid: session.pid,
       name: session.name,
       email: session.email,
-      phone: session.phone,
+      phone: session.phone || (MINIMAL_REGISTER_FORM ? "0000000000" : ""),
       workExperience: session.workExperience,
       domain: session.domain,
-        linkedinUrl: session.linkedinUrl,
-        collegeName: session.collegeName,
-        bestDescribeYou: session.bestDescribeYou,
-        considerMasters: session.considerMasters,
-        planningYear: session.planningYear,
-        interestsMost: session.interestsMost,
-        ...attributionForRegister(),
+      linkedinUrl: session.linkedinUrl,
+      collegeName:
+        session.collegeName ||
+        (MINIMAL_REGISTER_FORM ? "Test College" : ""),
+      bestDescribeYou: session.bestDescribeYou,
+      considerMasters:
+        session.considerMasters ||
+        (MINIMAL_REGISTER_FORM ? "Not currently" : ""),
+      planningYear:
+        session.planningYear ||
+        (MINIMAL_REGISTER_FORM ? "Not decided" : ""),
+      interestsMost:
+        session.interestsMost ||
+        (MINIMAL_REGISTER_FORM
+          ? "Just curious to see what the challenge is about"
+          : ""),
+      ...attributionForRegister(),
     });
 
     if (!reg.ok) {
@@ -330,15 +341,25 @@ export function flushPendingOnUnload(): void {
           pid: session.pid,
           name: session.name,
           email: session.email,
-          phone: session.phone,
+          phone: session.phone || (MINIMAL_REGISTER_FORM ? "0000000000" : ""),
           workExperience: session.workExperience,
           domain: session.domain,
           linkedinUrl: session.linkedinUrl,
-          collegeName: session.collegeName,
+          collegeName:
+            session.collegeName ||
+            (MINIMAL_REGISTER_FORM ? "Test College" : ""),
           bestDescribeYou: session.bestDescribeYou,
-          considerMasters: session.considerMasters,
-          planningYear: session.planningYear,
-          interestsMost: session.interestsMost,
+          considerMasters:
+            session.considerMasters ||
+            (MINIMAL_REGISTER_FORM ? "Not currently" : ""),
+          planningYear:
+            session.planningYear ||
+            (MINIMAL_REGISTER_FORM ? "Not decided" : ""),
+          interestsMost:
+            session.interestsMost ||
+            (MINIMAL_REGISTER_FORM
+              ? "Just curious to see what the challenge is about"
+              : ""),
           ...attributionForRegister(),
         })
       );

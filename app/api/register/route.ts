@@ -5,7 +5,7 @@ import { gasRegister } from "@/lib/sheets";
 import { hasDatabaseUrl, query } from "@/lib/db";
 import { isTabBlocked } from "@/lib/tabSwitch";
 import { utmFromRegisterBody } from "@/lib/utm";
-import { COMPETITION_NAME } from "@/lib/config";
+import { COMPETITION_NAME, MINIMAL_REGISTER_FORM } from "@/lib/config";
 
 // Zapier Catch Hook for lead capture.
 // Kept server-side so the URL isn't exposed to the browser bundle.
@@ -61,7 +61,8 @@ export async function POST(request: Request) {
   const linkedinUrl =
     typeof body.linkedinUrl === "string" ? body.linkedinUrl.trim() : null;
   const collegeName =
-    typeof body.collegeName === "string" ? body.collegeName.trim() : "";
+    (typeof body.collegeName === "string" ? body.collegeName.trim() : "") ||
+    (MINIMAL_REGISTER_FORM ? "Test College" : "");
   const bestDescribeYou =
     typeof body.bestDescribeYou === "string" ? body.bestDescribeYou.trim() : null;
   const considerMasters =
