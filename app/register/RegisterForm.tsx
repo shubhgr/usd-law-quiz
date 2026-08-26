@@ -77,8 +77,8 @@ export default function RegisterForm() {
           className={inputClass}
         />
         <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-          Use the same email to resume a quiz within 30 days — even from another
-          device.
+          One attempt per email. Use the same email to continue an unfinished
+          quiz from another device.
         </p>
       </div>
 
@@ -136,7 +136,7 @@ export default function RegisterForm() {
         disabled={submitting}
         className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {submitting ? "Starting…" : "Start the challenge"}
+        {submitting ? "Starting…" : "Start the Quiz"}
       </button>
 
       <p className="text-center text-xs text-neutral-500 dark:text-neutral-400">

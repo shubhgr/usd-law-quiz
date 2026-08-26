@@ -1,3 +1,5 @@
+import { COMPETITION_NAME } from "./config";
+
 export const TAB_SWITCH_LIMIT = 5;
 
 export type TabSwitchWarning = {
@@ -14,7 +16,7 @@ export function tabSwitchWarning(count: number): TabSwitchWarning | null {
   if (count >= TAB_SWITCH_LIMIT) {
     return {
       title: "Disqualified",
-      body: "You've left the challenge page 5 times. You have been disqualified from the AI Grand Prix and can no longer continue the challenge.",
+      body: `You've left the quiz page 5 times. You have been disqualified from the ${COMPETITION_NAME} and can no longer continue.`,
     };
   }
 
@@ -22,22 +24,22 @@ export function tabSwitchWarning(count: number): TabSwitchWarning | null {
     case 1:
       return {
         title: "Warning",
-        body: "You've left the challenge page once. Please return immediately and remain on the challenge page until you submit. Any further violation may result in disqualification.",
+        body: "You've left the quiz page once. Please return immediately and remain on the quiz until you finish. Any further violation may result in disqualification.",
       };
     case 2:
       return {
         title: "Serious violation",
-        body: "You've left the challenge page 2 times. This is a serious violation of the challenge rules. Any further tab switching may result in disqualification.",
+        body: "You've left the quiz page 2 times. This is a serious violation of the quiz rules. Any further tab switching may result in disqualification.",
       };
     case 3:
       return {
         title: "Final warning",
-        body: "You've left the challenge page 3 times. This is your final warning. Any further tab switching will result in disqualification.",
+        body: "You've left the quiz page 3 times. This is your final warning. Any further tab switching will result in disqualification.",
       };
     case 4:
       return {
         title: "Last chance",
-        body: "You've left the challenge page 4 times. One more violation will result in disqualification from the AI Grand Prix.",
+        body: `You've left the quiz page 4 times. One more violation will result in disqualification from the ${COMPETITION_NAME}.`,
       };
     default:
       return null;
@@ -45,7 +47,7 @@ export function tabSwitchWarning(count: number): TabSwitchWarning | null {
 }
 
 export function tabDisqualificationMessage(): string {
-  return "You've left the challenge page 5 times. You have been disqualified from the AI Grand Prix and can no longer continue the challenge.";
+  return `You've left the quiz page 5 times. You have been disqualified from the ${COMPETITION_NAME} and can no longer continue.`;
 }
 
 export function tabBlockMessage(_email?: string): string {

@@ -27,7 +27,8 @@ export const metadata: Metadata = {
     default: `${COMPETITION_NAME}`,
     template: `%s — ${COMPETITION_NAME}`,
   },
-  description: "A 26-question knowledge challenge with autosave, downloadable results and a live leaderboard.",
+  description:
+    "USD Law Quiz — a timed legal knowledge quiz with autosave, downloadable results, and a live leaderboard.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

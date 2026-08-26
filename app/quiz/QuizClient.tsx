@@ -1065,7 +1065,7 @@ export default function QuizClient({ email }: { email: string }) {
         <main className="mx-auto flex w-full max-w-lg flex-1 flex-col items-center justify-center px-5 py-12 sm:px-8">
           <div className="register-form-panel w-full p-6 text-left sm:p-8">
             <h1 className="text-center text-2xl font-bold text-white sm:text-3xl">
-              Ready to take the challenge?
+              Ready for the USD Law Quiz?
             </h1>
             <p className="mt-4 text-sm leading-relaxed text-slate-300 sm:text-base">
               You will see one question at a time. Each question has{" "}
@@ -1077,12 +1077,12 @@ export default function QuizClient({ email }: { email: string }) {
               A few things to keep in mind before you start:
             </p>
             <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-relaxed text-slate-400 sm:text-[0.9375rem]">
-              <li>You have one attempt and cannot restart the challenge.</li>
+              <li>You have one attempt and cannot restart the quiz.</li>
               <li>
                 Make sure you have a stable internet connection before you begin.
               </li>
               <li>
-                Please stay on the challenge page throughout. Switching tabs or
+                Please stay on the quiz page throughout. Switching tabs or
                 windows may lead to disqualification.
               </li>
               <li>Copying and pasting is disabled.</li>
@@ -1104,7 +1104,7 @@ export default function QuizClient({ email }: { email: string }) {
               disabled={starting}
               className="register-btn-primary mt-7"
             >
-              {starting ? "Starting…" : "Take the Challenge"}
+              {starting ? "Starting…" : "Start the Quiz"}
             </button>
           </div>
         </main>

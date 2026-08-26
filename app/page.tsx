@@ -117,7 +117,7 @@ export default function LandingPage() {
           : considerMasters,
         planningYear: MINIMAL_REGISTER_FORM ? "Not decided" : planningYear,
         interestsMost: MINIMAL_REGISTER_FORM
-          ? "Just curious to see what the challenge is about"
+          ? "Just curious to see what the quiz is about"
           : interestsMost,
         ...attributionForRegister(),
       };
@@ -466,8 +466,7 @@ export default function LandingPage() {
         {/* Top text — centered above form */}
         <header className="mb-8 w-full text-center">
           <h1 className="register-headline">
-            India&apos;s National AI Competition to identify the next-gen AI
-            talent
+            USD Law Quiz — test your legal knowledge and climb the leaderboard
           </h1>
         </header>
 
@@ -669,7 +668,7 @@ export default function LandingPage() {
 
                 <div>
                   <label htmlFor="interestsMost" className="register-label">
-                    What interests you most about the AI Grand Prix?*
+                    What interests you most about the USD Law Quiz?*
                   </label>
                   <div className="register-select-wrap">
                     <select
@@ -682,8 +681,8 @@ export default function LandingPage() {
                       <option value="" disabled>
                         Select…
                       </option>
-                      <option value="Testing my AI knowledge">
-                        Testing my AI knowledge
+                      <option value="Testing my legal knowledge">
+                        Testing my legal knowledge
                       </option>
                       <option value="Winning a scholarship for my U.S. Master's">
                         Winning a scholarship for my U.S. Master&apos;s
@@ -694,8 +693,8 @@ export default function LandingPage() {
                       <option value="Winning the cash prize">
                         Winning the cash prize
                       </option>
-                      <option value="Just curious to see what the challenge is about">
-                        Just curious to see what the challenge is about
+                      <option value="Just curious to see what the quiz is about">
+                        Just curious to see what the quiz is about
                       </option>
                     </select>
                   </div>

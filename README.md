@@ -52,7 +52,7 @@ The UI leaderboard is at [/leaderboard](http://localhost:3000/leaderboard).
 Embed the quiz on your Framer site so users stay on your page:
 
 ```
-https://usd-ai-quiz.vercel.app/
+https://your-usd-law-quiz-host/
 ```
 
 Users do **not** need to leave your site. The quiz runs inside the iframe.
@@ -74,7 +74,7 @@ Once `DATABASE_URL` is set, the backend uses Postgres-first for:
 - `/api/resume`
 - `/api/progress` (GET + POST) — per-question saves with server deadlines
 - `/api/quiz-start` / `/api/question-start` — arm 30s per-question timer
-- `/api/tab-switch` / `/api/integrity` — tab + copy/paste logging
+- `/api/tab-switch` — tab-switch logging (disqualify at 5)
 - `/api/leaderboard` and `/api/standings`
 
 ### Quiz timing model

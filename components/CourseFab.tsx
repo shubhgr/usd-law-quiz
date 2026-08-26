@@ -1,5 +1,5 @@
 const COURSE_URL =
-  "https://universityofsandiego.gradright.com/pg/ms-in-applied-artificial-intelligence?utm_source=thankyoupage&utm_medium=LP&utm_campaign=AI%20Quiz";
+  "https://universityofsandiego.gradright.com/pg/ms-in-applied-artificial-intelligence?utm_source=thankyoupage&utm_medium=LP&utm_campaign=USD%20Law%20Quiz";
 
 export default function CourseFab() {
   return (
@@ -24,7 +24,7 @@ export default function CourseFab() {
           />
         </svg>
       </span>
-      Take Your AI Skills Further →
+      Take Your Legal Skills Further →
     </a>
   );
 }

@@ -117,7 +117,7 @@ export async function downloadResultPdf(data: ResultPdfInput) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9.5);
   doc.setTextColor(...C.immaculata);
-  doc.text("Competition Result", pageWidth / 2, y, { align: "center" });
+  doc.text("Quiz Result", pageWidth / 2, y, { align: "center" });
   y += 5;
   doc.setDrawColor(...C.line);
   doc.setLineWidth(0.4);

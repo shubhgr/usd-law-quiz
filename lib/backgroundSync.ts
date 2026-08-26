@@ -171,7 +171,7 @@ async function runOnce(): Promise<void> {
       interestsMost:
         session.interestsMost ||
         (MINIMAL_REGISTER_FORM
-          ? "Just curious to see what the challenge is about"
+          ? "Just curious to see what the quiz is about"
           : ""),
       ...attributionForRegister(),
     });
@@ -358,7 +358,7 @@ export function flushPendingOnUnload(): void {
           interestsMost:
             session.interestsMost ||
             (MINIMAL_REGISTER_FORM
-              ? "Just curious to see what the challenge is about"
+              ? "Just curious to see what the quiz is about"
               : ""),
           ...attributionForRegister(),
         })

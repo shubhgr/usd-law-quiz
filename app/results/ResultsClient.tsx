@@ -527,7 +527,7 @@ export default function ResultsClient({ email }: { email: string }) {
               <span className="results-skel results-skel--badge" aria-hidden />
             </div>
             <p className="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-[#75BEE9]">
-              Your AI Grand Prix Result
+              Your USD Law Quiz Result
             </p>
           </div>
 
@@ -600,7 +600,7 @@ export default function ResultsClient({ email }: { email: string }) {
             </svg>
           </div>
           <p className="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-[#75BEE9]">
-            Your AI Grand Prix Result
+            Your USD Law Quiz Result
           </p>
         </div>
 

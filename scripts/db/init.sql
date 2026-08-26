@@ -1,4 +1,4 @@
--- USD Knowledge Challenge (Postgres) schema
+-- USD Law Quiz (Postgres) schema
 -- Run this against your Neon database.
 
 -- Participants table (registration + status)
