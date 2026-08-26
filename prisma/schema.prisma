@@ -1,0 +1,58 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum RegistrationStatus {
+  not_started
+  in_progress
+  completed
+  expired
+}
+
+model Registration {
+  pid            String             @id
+  name           String
+  email          String             @unique
+  phone          String
+  workExperience String?
+  domain         String?
+  linkedinUrl    String?
+  collegeName    String?
+  bestDescribeYou String?
+  considerMasters String?
+  planningYear   String?
+  interestsMost  String?
+  registeredAt   DateTime           @default(now())
+  status         RegistrationStatus @default(not_started)
+  lastActivityAt DateTime           @default(now())
+  responses      Response[]
+  score          Score?
+}
+
+model Response {
+  id         Int      @id @default(autoincrement())
+  pid        String
+  questionId String
+  answer     String
+  isCorrect  Boolean
+  answeredAt DateTime @default(now())
+
+  registration Registration @relation(fields: [pid], references: [pid])
+
+  @@unique([pid, questionId])
+  @@index([pid])
+}
+
+model Score {
+  pid                   String   @id
+  totalScore            Int
+  completionTimeSeconds Int
+  completedAt           DateTime @default(now())
+
+  registration Registration @relation(fields: [pid], references: [pid])
+}
