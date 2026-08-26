@@ -47,7 +47,7 @@ export async function resolveCredentialsByEmail(
     };
   }
 
-  // Instant path only when we already have a score — otherwise we still need
+  // Instant path only when we already have a score - otherwise we still need
   // Sheets (or /api/score) to finish scoring for results/leaderboard.
   if (hasLocal && local!.score !== null) {
     return {
@@ -99,7 +99,7 @@ export async function resolveCredentialsByEmail(
     // Fall through to local credentials if present.
   }
 
-  // Sheets slow/unavailable — still let quiz continue with local pid/token.
+  // Sheets slow/unavailable - still let quiz continue with local pid/token.
   if (hasLocal) {
     return {
       pid: local!.pid,

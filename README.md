@@ -72,9 +72,9 @@ Framer tip: use a full-height embed and avoid a restrictive `sandbox` on the ifr
 Once `DATABASE_URL` is set, the backend uses Postgres-first for:
 - `/api/register`
 - `/api/resume`
-- `/api/progress` (GET + POST) — per-question saves with server deadlines
-- `/api/quiz-start` / `/api/question-start` — arm 30s per-question timer
-- `/api/tab-switch` — tab-switch logging (disqualify at 5)
+- `/api/progress` (GET + POST) - per-question saves with server deadlines
+- `/api/quiz-start` / `/api/question-start` - arm 30s per-question timer
+- `/api/tab-switch` - tab-switch logging (disqualify at 5)
 - `/api/leaderboard` and `/api/standings`
 
 ### Quiz timing model

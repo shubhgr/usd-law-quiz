@@ -3,7 +3,7 @@ import "server-only";
 import { splitAnswerString } from "./answerString";
 import { questions } from "./questions";
 
-// Answer key stays on the server — never import this from client components.
+// Answer key stays on the server - never import this from client components.
 // Must match apps-script/Code.gs CORRECT_KEY (pipe-separated).
 export const CORRECT: Record<string, string> = {
   q1: "b",

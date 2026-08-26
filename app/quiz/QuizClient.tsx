@@ -432,7 +432,7 @@ export default function QuizClient({ email }: { email: string }) {
           }
 
           if (!res.ok) {
-            // Do not jump the UI on 409 — stay on the optimistic question.
+            // Do not jump the UI on 409 - stay on the optimistic question.
             if (res.status !== 409) {
               setSaveError(body.error ?? "Could not save answer.");
             }
@@ -463,7 +463,7 @@ export default function QuizClient({ email }: { email: string }) {
           applyAdvance(body);
         })
         .catch(() => {
-          setSaveError("Network error — your answer is saved locally.");
+          setSaveError("Network error - your answer is saved locally.");
         })
         .finally(() => {
           if (inFlightIndexRef.current === index) {
@@ -804,7 +804,7 @@ export default function QuizClient({ email }: { email: string }) {
           return;
         }
         if (!res.ok) {
-          // Last resort: local display timer so the UI isn't stuck on "—"
+          // Last resort: local display timer so the UI isn't stuck on "-"
           const localDeadline = new Date(
             Date.now() + QUESTION_TIME_LIMIT_SECONDS * 1000
           ).toISOString();
@@ -846,7 +846,7 @@ export default function QuizClient({ email }: { email: string }) {
     };
   }, [ready, quizStarted, deadlineAt, pid, token, linkResults]);
 
-  // Per-question countdown from deadline (stable callback via ref — avoids effect thrash).
+  // Per-question countdown from deadline (stable callback via ref - avoids effect thrash).
   useEffect(() => {
     if (!ready || !quizStarted || !deadlineAt) return;
 
@@ -944,7 +944,7 @@ export default function QuizClient({ email }: { email: string }) {
             : remainingSecondsUntil(body.deadlineAt)
         );
       } else {
-        // quiz-start succeeded but no deadline — arm via question-start
+        // quiz-start succeeded but no deadline - arm via question-start
         const qs = await fetch("/api/question-start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -972,7 +972,7 @@ export default function QuizClient({ email }: { email: string }) {
         }
       }
     } catch {
-      setSaveError("Network error — timer is running locally.");
+      setSaveError("Network error - timer is running locally.");
     } finally {
       setStarting(false);
     }
@@ -1016,7 +1016,7 @@ export default function QuizClient({ email }: { email: string }) {
         registered: session.registered ?? false,
       });
     }
-    // Selection only — user must click Submit (timer still auto-submits at 0).
+    // Selection only - user must click Submit (timer still auto-submits at 0).
   }, []);
 
   const submitSelected = useCallback(() => {
@@ -1176,7 +1176,7 @@ export default function QuizClient({ email }: { email: string }) {
               >
                 {remainingSeconds !== null
                   ? formatQuizCountdown(remainingSeconds)
-                  : "—"}
+                  : "-"}
               </p>
             </div>
           </div>
@@ -1237,7 +1237,7 @@ export default function QuizClient({ email }: { email: string }) {
         <div className="relative mt-6 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-slate-400">
             {canSubmit
-              ? "Ready — click Submit to continue."
+              ? "Ready - click Submit to continue."
               : need > 1
                 ? `Select ${need} options, then Submit.`
                 : "Select an answer, then Submit."}

@@ -168,7 +168,7 @@ export const questions: Question[] = [
   {
     id: "q15",
     carousel: 3,
-    text: "A company wants an LLM to answer: “What percentage of our customers cancelled in every quarter from Q1 2021 through Q4 2025?”\n\nThe connected analytics warehouse contains Q1 2021–Q4 2023 complete, 2024 70% complete, and 2025 with no cancellation records. The model can access no external systems.\n\nWhat should a trustworthy system do?",
+    text: "A company wants an LLM to answer: “What percentage of our customers cancelled in every quarter from Q1 2021 through Q4 2025?”\n\nThe connected analytics warehouse contains Q1 2021-Q4 2023 complete, 2024 70% complete, and 2025 with no cancellation records. The model can access no external systems.\n\nWhat should a trustworthy system do?",
     options: {
       a: "Estimate the missing years using its pretrained knowledge.",
       b: "Produce the requested percentages but attach a lower confidence score.",

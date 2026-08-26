@@ -442,7 +442,7 @@ export async function POST(request: Request) {
       const existingMap = await loadResponseMap(pid);
       if (q.id in existingMap) continue;
       const slot = parts[i] ?? "";
-      // Only write slots we know about from the pipe string (including empties once past first non-empty? — write all provided slots)
+      // Only write slots we know about from the pipe string (including empties once past first non-empty? - write all provided slots)
       if (i >= parts.length && !slot) continue;
       await upsertQuestionResponse({
         pid,
@@ -475,7 +475,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, completed: false, answers: answerStr });
   }
 
-  // Sheets fallback (legacy overall quiz) — store the pipe string as sent.
+  // Sheets fallback (legacy overall quiz) - store the pipe string as sent.
   const normalized = toFullPipeAnswerString(answers.trim().toLowerCase());
   if (!answers.trim()) {
     return NextResponse.json({ error: "answers is required" }, { status: 400 });

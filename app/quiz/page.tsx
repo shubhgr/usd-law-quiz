@@ -4,7 +4,7 @@ import LegacyEmailRedirect from "@/components/LegacyEmailRedirect";
 import { COMPETITION_NAME } from "@/lib/config";
 
 export const metadata = {
-  title: `Quiz — ${COMPETITION_NAME}`,
+  title: `Quiz - ${COMPETITION_NAME}`,
 };
 
 interface QuizPageProps {

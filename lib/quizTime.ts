@@ -91,7 +91,7 @@ export function questionDeadlineFromStart(
   return new Date(startMs + limitSeconds * 1000);
 }
 
-/** @deprecated Overall quiz expiry — replaced by per-question deadlines. */
+/** @deprecated Overall quiz expiry - replaced by per-question deadlines. */
 export function quizRemainingSeconds(
   startedAtMs: number,
   nowMs = Date.now()

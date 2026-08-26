@@ -24,7 +24,7 @@ function digitsOnly(value: string, max = PHONE_MAX_DIGITS) {
   return value.replace(/\D/g, "").slice(0, max);
 }
 
-/** Soft Next navigations often fail inside Framer iframes — use a full load. */
+/** Soft Next navigations often fail inside Framer iframes - use a full load. */
 function go(path: string) {
   window.location.assign(path);
 }
@@ -194,7 +194,7 @@ export default function LandingPage() {
           .catch(() => scheduleSync());
         scheduleSync();
 
-        // Already finished? Skip quiz entirely — go straight to results.
+        // Already finished? Skip quiz entirely - go straight to results.
         try {
           const resume = await fetchJson<{
             status?: string;
@@ -463,10 +463,10 @@ export default function LandingPage() {
   return (
     <div className="binary-bg min-h-dvh">
       <main className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col items-center justify-center px-5 py-12 sm:px-8">
-        {/* Top text — centered above form */}
+        {/* Top text - centered above form */}
         <header className="mb-8 w-full text-center">
           <h1 className="register-headline">
-            USD Law Quiz — test your legal knowledge and climb the leaderboard
+            USD Law Quiz - test your legal knowledge and climb the leaderboard
           </h1>
         </header>
 

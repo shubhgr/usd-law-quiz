@@ -191,7 +191,7 @@ export async function getCachedLeaderboard(params: {
     if (cache) {
       const result = view(pid, limit, cache);
       if (!pid || result.me) return result;
-      // Shared inflight may have been started without this pid — fetch me specifically.
+      // Shared inflight may have been started without this pid - fetch me specifically.
       await fetchEntries(pid);
       if (cache) return view(pid, limit, cache);
     }

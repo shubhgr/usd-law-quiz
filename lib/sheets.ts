@@ -276,7 +276,7 @@ export async function gasSaveAnswers(params: {
   name?: string;
   email?: string;
   status?: string;
-  /** Backend-computed — Apps Script stores only, never scores. */
+  /** Backend-computed - Apps Script stores only, never scores. */
   score?: number;
   completionTimeSeconds?: number;
   completedAt?: string | null;

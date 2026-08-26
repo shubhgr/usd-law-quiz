@@ -16,7 +16,7 @@
   --font-label: var(--font-inter), var(--font-sofia-sans), system-ui, sans-serif;
 }
 
-/* Brand palette — FFFFFF / 003B70 / 0074C8 / 75BEE9 */
+/* Brand palette - FFFFFF / 003B70 / 0074C8 / 75BEE9 */
 @theme {
   --color-neutral-50: #e3f2fc;
   --color-neutral-100: #cce8fa;
@@ -686,7 +686,7 @@
     color: #ffffff;
   }
 
-  /* Registration page — GradRight-inspired */
+  /* Registration page - GradRight-inspired */
   .binary-bg {
     background-color: #000000;
     background-image:

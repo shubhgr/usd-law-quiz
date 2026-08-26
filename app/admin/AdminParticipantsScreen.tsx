@@ -245,13 +245,13 @@ function ParticipantsAdmin({ assignPid }: { assignPid?: string }) {
                 <p>
                   Rank:{" "}
                   <span className="font-semibold text-white">
-                    {p.rank === null || p.rank === undefined ? "—" : p.rank}
+                    {p.rank === null || p.rank === undefined ? "-" : p.rank}
                   </span>
                 </p>
                 <p>
                   Score:{" "}
                   <span className="font-semibold text-white">
-                    {p.score === null ? "—" : p.score}
+                    {p.score === null ? "-" : p.score}
                   </span>
                 </p>
                 <p className="text-slate-500">{p.status}</p>

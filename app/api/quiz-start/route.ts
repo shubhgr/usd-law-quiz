@@ -125,7 +125,7 @@ export async function POST(request: Request) {
       armed = await armQuestionDeadline(pid, index, now);
     } catch (err) {
       console.error("[quiz-start] armQuestionDeadline failed", err);
-      // Schema may be missing new columns — still return a usable deadline.
+      // Schema may be missing new columns - still return a usable deadline.
       const deadlineAt = new Date(
         now.getTime() + QUESTION_TIME_LIMIT_SECONDS * 1000
       ).toISOString();
@@ -148,7 +148,7 @@ export async function POST(request: Request) {
     });
   }
 
-  // Sheets-only: no server deadline columns — still return a 30s window.
+  // Sheets-only: no server deadline columns - still return a 30s window.
   const result = await gasQuizStart({ pid, quizStartedAt: now.toISOString() });
   const deadlineAt = new Date(
     now.getTime() + QUESTION_TIME_LIMIT_SECONDS * 1000

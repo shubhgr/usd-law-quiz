@@ -1,4 +1,4 @@
-// USD Law Quiz — Google Sheets STORE ONLY
+// USD Law Quiz - Google Sheets STORE ONLY
 // Backend (Next.js + Postgres) owns scoring, timers, and quiz logic.
 // This script only writes/reads rows the backend sends.
 //
@@ -216,7 +216,7 @@ function writeUtmColumns(sheet, row, params) {
   sheet.getRange(row, REG_UTM_SOURCE, 1, values.length).setValues([values]);
 }
 
-/** Upsert Registration row — values come from backend. */
+/** Upsert Registration row - values come from backend. */
 function actionRegister(params) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName("Registration");
@@ -529,7 +529,7 @@ function actionQuizStart(params) {
   };
 }
 
-/** Read-only helpers for rare Sheets fallback — no scoring. */
+/** Read-only helpers for rare Sheets fallback - no scoring. */
 function actionResume(params) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var email = String(params.email || "")

@@ -138,7 +138,7 @@ export default function ResultsClient({ email }: { email: string }) {
       scheduleSync();
     }
     prefetchStandings();
-    // Only show the results card once we have a score — never flash an empty
+    // Only show the results card once we have a score - never flash an empty
     // "calculating…" card after the loading screen.
     if (session?.score !== null && session?.score !== undefined) {
       const timer = window.setTimeout(() => setRevealCard(true), REVEAL_MS);
@@ -254,7 +254,7 @@ export default function ResultsClient({ email }: { email: string }) {
         setLocalTimeSeconds(creds.score.completionTimeSeconds);
         setRevealCard(true);
       } else if (creds.answers && creds.answers.length > 0) {
-        // Sheets hasn't written score yet — grade on Next immediately.
+        // Sheets hasn't written score yet - grade on Next immediately.
         try {
           const res = await fetch("/api/score", {
             method: "POST",
@@ -394,7 +394,7 @@ export default function ResultsClient({ email }: { email: string }) {
       return false;
     }
 
-    // Already have a cached rank — refresh quietly in the background.
+    // Already have a cached rank - refresh quietly in the background.
     if (rank) {
       void fetchRank(pid, token);
       return () => {
@@ -569,7 +569,7 @@ export default function ResultsClient({ email }: { email: string }) {
   const score = data.score;
   const timeSeconds = score.completionTimeSeconds ?? localTimeSeconds;
   const timeLabel =
-    timeSeconds != null ? formatDuration(timeSeconds) : "—";
+    timeSeconds != null ? formatDuration(timeSeconds) : "-";
   const rankLabel = rank ? `#${rank}` : null;
 
   return (

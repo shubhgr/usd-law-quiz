@@ -11,7 +11,7 @@ export function isTabBlocked(count: number | null | undefined): boolean {
   return (Number(count) || 0) >= TAB_SWITCH_LIMIT;
 }
 
-/** Progressive warnings for tab switches 1–4; 5th+ shows disqualification. */
+/** Progressive warnings for tab switches 1-4; 5th+ shows disqualification. */
 export function tabSwitchWarning(count: number): TabSwitchWarning | null {
   if (count >= TAB_SWITCH_LIMIT) {
     return {

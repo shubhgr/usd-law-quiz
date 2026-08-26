@@ -25,10 +25,10 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: {
     default: `${COMPETITION_NAME}`,
-    template: `%s — ${COMPETITION_NAME}`,
+    template: `%s - ${COMPETITION_NAME}`,
   },
   description:
-    "USD Law Quiz — a timed legal knowledge quiz with autosave, downloadable results, and a live leaderboard.",
+    "USD Law Quiz - a timed legal knowledge quiz with autosave, downloadable results, and a live leaderboard.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
