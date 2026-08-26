@@ -2,7 +2,6 @@ import { loadSession, saveSession } from "./clientSession";
 import { quizUrl, resultsUrl, leaderboardUrl } from "./quizUrls";
 import { allAnswersString } from "./quizScreens";
 import { isAnswerSetComplete, isAnswerStringComplete } from "./answerString";
-import { isQuizTimeExpired } from "./quizTime";
 import { attributionForRegister } from "./utm";
 import { showToast } from "./toast";
 
@@ -216,13 +215,9 @@ async function runOnce(): Promise<void> {
   if (!session?.completed || session.submitted) return;
 
   // Fallback: explicit submit if answers synced but score not finalized yet.
-  const timedOut = Boolean(
-    session.quizStartedAt && isQuizTimeExpired(session.quizStartedAt)
-  );
   if (
-    timedOut ||
-    (isAnswerSetComplete(session.answers) &&
-      isAnswerStringComplete(session.syncedAnswerString))
+    isAnswerSetComplete(session.answers) &&
+    isAnswerStringComplete(session.syncedAnswerString)
   ) {
     const res = await postJson("/api/submit", {
       pid: session.pid,
@@ -255,7 +250,7 @@ async function runOnce(): Promise<void> {
       return;
     }
 
-    // Poll progress for score if submit still pending on sheet.
+    // Poll progress for score if submit still pending.
     try {
       const res = await fetch(
         `/api/progress?pid=${encodeURIComponent(session.pid)}&token=${encodeURIComponent(session.token)}`

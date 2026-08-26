@@ -1,13 +1,9 @@
 import { NextResponse } from "next/server";
 import { verifyToken } from "@/lib/token";
-import { gasSubmit } from "@/lib/sheets";
 import { respondSheetsError } from "@/lib/handleSheetsError";
-import { invalidateLeaderboardCache } from "@/lib/leaderboardCache";
-import { invalidateCollegeLeaderboardCache } from "@/lib/collegeLeaderboardCache";
 import { hasDatabaseUrl, query } from "@/lib/db";
-import { scoreFromAnswerString } from "@/lib/answerKey";
-import { isAnswerStringComplete } from "@/lib/answerString";
-import { isQuizTimeExpired, quizElapsedSeconds, quizStartMs } from "@/lib/quizTime";
+import { finalizeAttempt, loadAttempt } from "@/lib/questionAttempt";
+import { isTabBlocked } from "@/lib/tabSwitch";
 
 interface SubmitBody {
   pid?: string;
@@ -32,111 +28,59 @@ export async function POST(request: Request) {
   }
 
   try {
-    // Postgres-first path.
     if (hasDatabaseUrl()) {
-      const rows = await query<{
-        pid: string;
-        answers: string;
-        score: number | null;
-        completion_time_seconds: number | null;
-        completed_at: string | null;
-        registered_at: string | null;
-        quiz_started_at: string | null;
+      const parts = await query<{
+        status: string;
+        tab_switches: number | null;
       }>(
-        `SELECT
-           p.pid,
-           a.answers,
-           a.score,
-           a.completion_time_seconds,
-           a.completed_at,
-           p.registered_at,
-           p.quiz_started_at
-         FROM participants p
-         JOIN attempts a ON a.pid = p.pid
-         WHERE p.pid = $1
-         LIMIT 1`,
+        `SELECT status, tab_switches FROM participants WHERE pid = $1 LIMIT 1`,
         [pid]
       );
-
-      if (!rows.length) {
-        return NextResponse.json({ error: "Participant not found" }, { status: 404 });
-      }
-
-      const r = rows[0]!;
-      if (r.score !== null) {
-        return NextResponse.json({
-          totalScore: Number(r.score),
-          completionTimeSeconds: Number(r.completion_time_seconds ?? 0),
-          completedAt: r.completed_at ? new Date(r.completed_at).toISOString() : null,
-        });
-      }
-
-      const answerStr = (r.answers ?? "").trim().toLowerCase();
-      const now = new Date();
-      const startedAtMs = quizStartMs(r.quiz_started_at, r.registered_at, now.getTime());
-      const timedOut = isQuizTimeExpired(startedAtMs, now.getTime());
-
-      if (!isAnswerStringComplete(answerStr) && !timedOut) {
+      if (!parts.length) {
         return NextResponse.json(
-          { error: "Not all questions have been answered" },
-          { status: 400 }
+          { error: "Participant not found" },
+          { status: 404 }
+        );
+      }
+      if (
+        parts[0]!.status === "blocked" ||
+        isTabBlocked(parts[0]!.tab_switches)
+      ) {
+        return NextResponse.json(
+          { error: "Disqualified", blocked: true },
+          { status: 403 }
         );
       }
 
-      const completionTimeSeconds = quizElapsedSeconds(startedAtMs, now.getTime());
+      const attempt = await loadAttempt(pid);
+      if (!attempt) {
+        return NextResponse.json(
+          { error: "Participant not found" },
+          { status: 404 }
+        );
+      }
 
-      const totalScore = scoreFromAnswerString(answerStr);
+      if (attempt.score !== null) {
+        return NextResponse.json({
+          totalScore: Number(attempt.score),
+          completionTimeSeconds: Number(attempt.completion_time_seconds ?? 0),
+          completedAt: attempt.completed_at
+            ? new Date(attempt.completed_at).toISOString()
+            : null,
+        });
+      }
 
-      await query(
-        `UPDATE attempts
-           SET score = $2,
-               completion_time_seconds = $3,
-               completed_at = $4,
-               updated_at = $5
-         WHERE pid = $1`,
-        [
-          pid,
-          totalScore,
-          completionTimeSeconds,
-          now.toISOString(),
-          now.toISOString(),
-        ]
-      );
-
-      await query(
-        `UPDATE participants
-           SET status = 'completed',
-               last_activity_at = $2
-         WHERE pid = $1`,
-        [pid, now.toISOString()]
-      );
-
-      invalidateLeaderboardCache();
-      invalidateCollegeLeaderboardCache();
-
-      // Background mirror to Google Sheets (Apps Script).
-      void gasSubmit(pid).catch(() => {
-        // ignore
-      });
-
-      return NextResponse.json({
-        totalScore,
-        completionTimeSeconds,
-        completedAt: now.toISOString(),
-      });
+      const result = await finalizeAttempt(pid, new Date());
+      return NextResponse.json(result);
     }
 
-    // The Apps Script backend reads the saved answers from the Responses tab,
-    // computes the score + completion time, writes them, and marks the
-    // participant as completed. The client never sends a score.
-    const result = await gasSubmit(pid);
-    invalidateLeaderboardCache();
-    invalidateCollegeLeaderboardCache();
-    return NextResponse.json({
-      totalScore: result.totalScore,
-      completionTimeSeconds: result.completionTimeSeconds,
-      completedAt: result.completedAt,
-    });
+    return NextResponse.json(
+      {
+        error:
+          "Submit requires Postgres (DATABASE_URL). Sheets is store-only and needs score from backend.",
+      },
+      { status: 503 }
+    );
   } catch (err) {
     const response = respondSheetsError(err);
     if (response) return response;

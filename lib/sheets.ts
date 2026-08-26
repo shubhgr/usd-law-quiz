@@ -273,6 +273,13 @@ export async function gasGetProgress(pid: string): Promise<ProgressInfo> {
 export async function gasSaveAnswers(params: {
   pid: string;
   answers: string;
+  name?: string;
+  email?: string;
+  status?: string;
+  /** Backend-computed — Apps Script stores only, never scores. */
+  score?: number;
+  completionTimeSeconds?: number;
+  completedAt?: string | null;
 }): Promise<{
   ok: true;
   completed?: boolean;
@@ -282,17 +289,27 @@ export async function gasSaveAnswers(params: {
 }> {
   const answers = params.answers.trim().toLowerCase();
 
+  const payload: Record<string, string | number | boolean> = {
+    action: "saveAnswers",
+    pid: params.pid,
+    answers,
+  };
+  if (params.name) payload.name = params.name;
+  if (params.email) payload.email = params.email;
+  if (params.status) payload.status = params.status;
+  if (typeof params.score === "number") payload.score = params.score;
+  if (typeof params.completionTimeSeconds === "number") {
+    payload.completionTimeSeconds = params.completionTimeSeconds;
+  }
+  if (params.completedAt) payload.completedAt = params.completedAt;
+
   const result = await gas<{
     ok: true;
     completed?: boolean;
     totalScore?: number;
     completionTimeSeconds?: number;
     completedAt?: string | null;
-  }>({
-    action: "saveAnswers",
-    pid: params.pid,
-    answers,
-  });
+  }>(payload);
   return {
     ...result,
     completedAt: result.completedAt ? toIso(result.completedAt) : null,
@@ -303,7 +320,15 @@ export async function gasClearResponses(pid: string): Promise<{ ok: true }> {
   return gas<{ ok: true }>({ action: "clearResponses", pid });
 }
 
-export async function gasSubmit(pid: string): Promise<{
+export async function gasSubmit(params: {
+  pid: string;
+  totalScore: number;
+  completionTimeSeconds: number;
+  completedAt?: string | null;
+  answers?: string;
+  name?: string;
+  email?: string;
+}): Promise<{
   ok: true;
   alreadyCompleted: boolean;
   totalScore: number;
@@ -318,7 +343,13 @@ export async function gasSubmit(pid: string): Promise<{
     completedAt: string | null;
   }>({
     action: "submit",
-    pid: pid,
+    pid: params.pid,
+    totalScore: params.totalScore,
+    completionTimeSeconds: params.completionTimeSeconds,
+    completedAt: params.completedAt ?? new Date().toISOString(),
+    ...(params.answers !== undefined ? { answers: params.answers } : {}),
+    ...(params.name ? { name: params.name } : {}),
+    ...(params.email ? { email: params.email } : {}),
   });
   return { ...result, completedAt: toIso(result.completedAt) };
 }
@@ -350,16 +381,19 @@ export async function gasLeaderboard(params: {
 export async function gasTabSwitch(params: {
   pid: string;
   count: number;
+  blocked?: boolean;
 }): Promise<{ ok: true; tabSwitches?: number; blocked?: boolean }> {
   return gas<{ ok: true; tabSwitches?: number; blocked?: boolean }>({
     action: "tabSwitch",
     pid: params.pid,
     count: params.count,
+    blocked: Boolean(params.blocked),
   });
 }
 
 export async function gasQuizStart(params: {
   pid: string;
+  quizStartedAt?: string | null;
 }): Promise<{
   ok: true;
   quizStartedAt?: string | null;
@@ -372,6 +406,7 @@ export async function gasQuizStart(params: {
   }>({
     action: "quizStart",
     pid: params.pid,
+    ...(params.quizStartedAt ? { quizStartedAt: params.quizStartedAt } : {}),
   });
   return {
     ...result,

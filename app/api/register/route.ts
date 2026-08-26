@@ -10,7 +10,7 @@ import { COMPETITION_NAME } from "@/lib/config";
 // Zapier Catch Hook for lead capture.
 // Kept server-side so the URL isn't exposed to the browser bundle.
 const ZAPIER_CATCH_HOOK_URL =
-  "https://hooks.zapier.com/hooks/catch/7733500/4tsfpe0/";
+  "https://hooks.zapier.com/hooks/catch/26346452/4tnggzc/";
 
 function postToZapier(payload: Record<string, unknown>) {
   // Fire-and-forget: never block UI registration flow.

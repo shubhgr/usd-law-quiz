@@ -72,5 +72,13 @@ Framer tip: use a full-height embed and avoid a restrictive `sandbox` on the ifr
 Once `DATABASE_URL` is set, the backend uses Postgres-first for:
 - `/api/register`
 - `/api/resume`
-- `/api/progress` (GET + POST)
+- `/api/progress` (GET + POST) — per-question saves with server deadlines
+- `/api/quiz-start` / `/api/question-start` — arm 30s per-question timer
+- `/api/tab-switch` / `/api/integrity` — tab + copy/paste logging
 - `/api/leaderboard` and `/api/standings`
+
+### Quiz timing model
+- One question at a time; **30 seconds per question** (server-authoritative deadline).
+- Timeout auto-submits the current question (blank if unanswered) and advances.
+- Single attempt per email; tab-switch limit still disqualifies at 5.
+- Re-run `scripts/db/init.sql` after pulling to add `question_responses`, `integrity_events`, and attempt deadline columns.

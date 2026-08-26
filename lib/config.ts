@@ -1,11 +1,13 @@
-// Product decisions flagged as configurable.
-// "allow restart" (rather than hard lockout) is the demo default:
-// an in-progress participant who returns after this many days of
-// inactivity gets their prior answers cleared and may restart.
-export const RESTART_AFTER_DAYS = 30;
-
 export const COMPETITION_NAME = "USD Law Quiz";
 
-/** Total allowed quiz duration from quizStartedAt. */
-export const QUIZ_TIME_LIMIT_MINUTES = 45;
-export const QUIZ_TIME_LIMIT_SECONDS = QUIZ_TIME_LIMIT_MINUTES * 60;
+/** Seconds allowed for each individual question (server-authoritative). */
+export const QUESTION_TIME_LIMIT_SECONDS = 30;
+
+/** Small grace for network latency when validating answer deadlines. */
+export const QUESTION_DEADLINE_GRACE_MS = 1500;
+
+/** @deprecated Kept for any residual imports; quiz uses per-question timer. */
+export const QUIZ_TIME_LIMIT_MINUTES = 0;
+/** Total wall-clock budget ≈ questions × per-question limit (display/docs only). */
+export const QUIZ_TIME_LIMIT_SECONDS =
+  QUESTION_TIME_LIMIT_SECONDS; // per-question; not overall

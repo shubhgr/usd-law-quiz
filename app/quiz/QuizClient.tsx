@@ -19,12 +19,8 @@ import {
   selectCountFor,
 } from "@/lib/answerString";
 import { isTabBlocked, TAB_SWITCH_LIMIT, tabSwitchWarning } from "@/lib/tabSwitch";
-import {
-  formatQuizCountdown,
-  quizElapsedSeconds,
-  quizRemainingSeconds,
-} from "@/lib/quizTime";
-import { QUIZ_TIME_LIMIT_MINUTES } from "@/lib/config";
+import { formatQuizCountdown, remainingSecondsUntil } from "@/lib/quizTime";
+import { QUESTION_TIME_LIMIT_SECONDS } from "@/lib/config";
 import EmailBlocked from "@/components/EmailBlocked";
 
 const TOTAL_QUESTIONS = questions.length;
@@ -33,7 +29,7 @@ interface ProgressResponse {
   pid: string;
   name: string;
   email: string;
-  status: "not_started" | "in_progress" | "completed" | "expired";
+  status: string;
   lastActivityAt: string;
   daysSinceLastActivity: number;
   restarted: boolean;
@@ -45,6 +41,23 @@ interface ProgressResponse {
     completedAt: string;
   } | null;
   quizStartedAt?: string | null;
+  currentQuestionIndex?: number;
+  deadlineAt?: string | null;
+  tabSwitches?: number;
+  blocked?: boolean;
+}
+
+function logIntegrity(
+  pid: string,
+  token: string,
+  eventType: "copy" | "cut" | "paste"
+) {
+  if (!pid || !token) return;
+  void fetch("/api/integrity", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pid, token, eventType }),
+  }).catch(() => undefined);
 }
 
 export default function QuizClient({ email }: { email: string }) {
@@ -67,8 +80,6 @@ export default function QuizClient({ email }: { email: string }) {
       ? session.token
       : "";
   });
-  // Questions ship with the client — show them immediately when we already
-  // have a local in-progress session (no network wait).
   const [ready, setReady] = useState(() => {
     const session = loadSession();
     return Boolean(
@@ -80,7 +91,6 @@ export default function QuizClient({ email }: { email: string }) {
     );
   });
   const [error, setError] = useState("");
-  const [restartNotice, setRestartNotice] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>(() => {
     const session = loadSession();
     return session &&
@@ -114,18 +124,35 @@ export default function QuizClient({ email }: { email: string }) {
     return Object.keys(session.answers ?? {}).length > 0;
   });
   const [starting, setStarting] = useState(false);
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const [deadlineAt, setDeadlineAt] = useState<string | null>(null);
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+
   const tabCountRef = useRef(0);
   const pendingTabWarningRef = useRef(false);
-
   const submittingRef = useRef(false);
-  const timeExpiredRef = useRef(false);
-  const firstUnansweredRef = useRef<HTMLElement | null>(null);
-  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
-  const [timeExpired, setTimeExpired] = useState(false);
+  const savingRef = useRef(false);
+  const deadlineRef = useRef<string | null>(null);
+  const questionIndexRef = useRef(0);
+  const answersRef = useRef(answers);
+  const timedOutForIndexRef = useRef<number | null>(null);
 
   useEffect(() => {
     tabCountRef.current = tabLeaveCount;
   }, [tabLeaveCount]);
+
+  useEffect(() => {
+    deadlineRef.current = deadlineAt;
+  }, [deadlineAt]);
+
+  useEffect(() => {
+    questionIndexRef.current = questionIndex;
+  }, [questionIndex]);
+
+  useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
 
   useEffect(() => {
     const flush = () => flushPendingOnUnload();
@@ -136,6 +163,13 @@ export default function QuizClient({ email }: { email: string }) {
   }, []);
 
   useEffect(() => {
+    const blockAndLog = (type: "copy" | "cut" | "paste") => (e: Event) => {
+      e.preventDefault();
+      logIntegrity(pid, token, type);
+    };
+    const onCopy = blockAndLog("copy");
+    const onCut = blockAndLog("cut");
+    const onPaste = blockAndLog("paste");
     const block = (e: Event) => {
       e.preventDefault();
     };
@@ -151,25 +185,27 @@ export default function QuizClient({ email }: { email: string }) {
           key === "u")
       ) {
         e.preventDefault();
+        if (key === "c") logIntegrity(pid, token, "copy");
+        if (key === "x") logIntegrity(pid, token, "cut");
       }
     };
-    document.addEventListener("copy", block);
-    document.addEventListener("cut", block);
-    document.addEventListener("paste", block);
+    document.addEventListener("copy", onCopy);
+    document.addEventListener("cut", onCut);
+    document.addEventListener("paste", onPaste);
     document.addEventListener("contextmenu", block);
     document.addEventListener("dragstart", block);
     document.addEventListener("selectstart", block);
     document.addEventListener("keydown", blockKeys);
     return () => {
-      document.removeEventListener("copy", block);
-      document.removeEventListener("cut", block);
-      document.removeEventListener("paste", block);
+      document.removeEventListener("copy", onCopy);
+      document.removeEventListener("cut", onCut);
+      document.removeEventListener("paste", onPaste);
       document.removeEventListener("contextmenu", block);
       document.removeEventListener("dragstart", block);
       document.removeEventListener("selectstart", block);
       document.removeEventListener("keydown", blockKeys);
     };
-  }, []);
+  }, [pid, token]);
 
   useEffect(() => {
     if (!ready || !quizStarted) return;
@@ -187,11 +223,24 @@ export default function QuizClient({ email }: { email: string }) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ pid, token, count: next }),
-          }).catch(() => undefined);
-        }
-        if (next >= TAB_SWITCH_LIMIT) {
-          pendingTabWarningRef.current = true;
-          return;
+          })
+            .then(async (res) => {
+              if (!res.ok) return;
+              const body = (await res.json()) as {
+                tabSwitches?: number;
+                blocked?: boolean;
+              };
+              if (typeof body.tabSwitches === "number") {
+                tabCountRef.current = body.tabSwitches;
+                setTabLeaveCount(body.tabSwitches);
+                const s = loadSession();
+                if (s) saveSession({ ...s, tabSwitches: body.tabSwitches });
+              }
+              if (body.blocked) {
+                pendingTabWarningRef.current = true;
+              }
+            })
+            .catch(() => undefined);
         }
         pendingTabWarningRef.current = true;
         return;
@@ -208,11 +257,212 @@ export default function QuizClient({ email }: { email: string }) {
     };
   }, [ready, quizStarted, pid, token]);
 
+  const finishQuiz = useCallback(
+    (payload: {
+      totalScore?: number;
+      completionTimeSeconds?: number;
+      completedAt?: string | null;
+    }) => {
+      if (submittingRef.current) return;
+      submittingRef.current = true;
+      const session = loadSession();
+      const nextAnswers = answersRef.current;
+      saveSession({
+        pid: session?.pid ?? pid,
+        token: session?.token ?? token,
+        name: session?.name ?? "",
+        email: session?.email ?? email,
+        phone: session?.phone ?? "",
+        workExperience: session?.workExperience ?? "",
+        domain: session?.domain ?? "",
+        linkedinUrl: session?.linkedinUrl ?? "",
+        collegeName: session?.collegeName ?? "",
+        bestDescribeYou: session?.bestDescribeYou ?? "",
+        considerMasters: session?.considerMasters ?? "",
+        planningYear: session?.planningYear ?? "",
+        interestsMost: session?.interestsMost ?? "",
+        registeredAt: session?.registeredAt ?? Date.now(),
+        quizStartedAt: session?.quizStartedAt ?? Date.now(),
+        registered: true,
+        answers: nextAnswers,
+        syncedAnswerString: allAnswersString(nextAnswers),
+        completed: true,
+        submitted: true,
+        score:
+          typeof payload.totalScore === "number"
+            ? payload.totalScore
+            : session?.score ?? null,
+        completionTimeSeconds:
+          typeof payload.completionTimeSeconds === "number"
+            ? payload.completionTimeSeconds
+            : session?.completionTimeSeconds ?? null,
+        completedAt:
+          payload.completedAt ?? session?.completedAt ?? new Date().toISOString(),
+        tabSwitches: session?.tabSwitches ?? tabCountRef.current,
+      });
+      router.replace(linkResults);
+    },
+    [pid, token, email, router, linkResults]
+  );
+
+  const applyAdvance = useCallback(
+    (body: {
+      completed?: boolean;
+      totalScore?: number;
+      completionTimeSeconds?: number;
+      completedAt?: string | null;
+      nextQuestionIndex?: number;
+      nextQuestionId?: string;
+      deadlineAt?: string | null;
+      remainingMs?: number;
+    }) => {
+      if (body.completed) {
+        finishQuiz({
+          totalScore: body.totalScore,
+          completionTimeSeconds: body.completionTimeSeconds,
+          completedAt: body.completedAt,
+        });
+        return;
+      }
+      if (typeof body.nextQuestionIndex === "number") {
+        setQuestionIndex(body.nextQuestionIndex);
+        questionIndexRef.current = body.nextQuestionIndex;
+        timedOutForIndexRef.current = null;
+      }
+      if (body.deadlineAt) {
+        setDeadlineAt(body.deadlineAt);
+        deadlineRef.current = body.deadlineAt;
+        setRemainingSeconds(
+          typeof body.remainingMs === "number"
+            ? Math.ceil(body.remainingMs / 1000)
+            : remainingSecondsUntil(body.deadlineAt)
+        );
+      }
+    },
+    [finishQuiz]
+  );
+
+  const submitCurrentQuestion = useCallback(
+    async (opts: { timedOut: boolean; answerOverride?: string }) => {
+      if (savingRef.current || submittingRef.current) return;
+      const index = questionIndexRef.current;
+      const q = questions[index];
+      if (!q) return;
+
+      const apiPid = loadSession()?.pid ?? pid;
+      const apiToken = loadSession()?.token ?? token;
+      if (!apiPid || !apiToken) return;
+
+      savingRef.current = true;
+      setSaving(true);
+      setSaveError("");
+
+      const answerValue =
+        opts.answerOverride !== undefined
+          ? opts.answerOverride
+          : answersRef.current[q.id] ?? "";
+
+      try {
+        const res = await fetch("/api/progress", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pid: apiPid,
+            token: apiToken,
+            questionId: q.id,
+            questionIndex: index,
+            answer: answerValue,
+            timedOut: opts.timedOut,
+          }),
+        });
+        const body = (await res.json()) as {
+          error?: string;
+          blocked?: boolean;
+          completed?: boolean;
+          totalScore?: number;
+          completionTimeSeconds?: number;
+          completedAt?: string | null;
+          nextQuestionIndex?: number;
+          nextQuestionId?: string;
+          deadlineAt?: string | null;
+          remainingMs?: number;
+        };
+
+        if (res.status === 403 || body.blocked) {
+          setBlocked(true);
+          return;
+        }
+
+        if (!res.ok) {
+          setSaveError(body.error ?? "Could not save answer. Retrying…");
+          // On conflict with current question, re-fetch question-start.
+          if (res.status === 409) {
+            const qs = await fetch("/api/question-start", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pid: apiPid, token: apiToken }),
+            });
+            if (qs.ok) {
+              const qb = (await qs.json()) as {
+                done?: boolean;
+                questionIndex?: number;
+                deadlineAt?: string | null;
+                remainingMs?: number;
+              };
+              if (qb.done) {
+                const sub = await fetch("/api/submit", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ pid: apiPid, token: apiToken }),
+                });
+                if (sub.ok) {
+                  const sb = (await sub.json()) as {
+                    totalScore?: number;
+                    completionTimeSeconds?: number;
+                    completedAt?: string | null;
+                  };
+                  finishQuiz(sb);
+                }
+              } else if (typeof qb.questionIndex === "number") {
+                applyAdvance({
+                  nextQuestionIndex: qb.questionIndex,
+                  deadlineAt: qb.deadlineAt,
+                  remainingMs: qb.remainingMs,
+                });
+              }
+            }
+          }
+          return;
+        }
+
+        const session = loadSession();
+        if (session) {
+          const nextAnswers = { ...session.answers };
+          nextAnswers[q.id] = normalizeChoice(answerValue);
+          saveSession({
+            ...session,
+            answers: nextAnswers,
+            syncedAnswerString: allAnswersString(nextAnswers),
+          });
+          setAnswers(nextAnswers);
+          answersRef.current = nextAnswers;
+        }
+
+        applyAdvance(body);
+      } catch {
+        setSaveError("Network error. Please try again.");
+      } finally {
+        savingRef.current = false;
+        setSaving(false);
+      }
+    },
+    [pid, token, applyAdvance, finishQuiz]
+  );
+
   useEffect(() => {
     let cancelled = false;
 
     const goResults = () => {
-      // Hard navigation so the quiz UI never sticks for completed attempts.
       window.location.replace(linkResults);
     };
 
@@ -235,8 +485,6 @@ export default function QuizClient({ email }: { email: string }) {
         return;
       }
 
-      // Local in-progress: questions are already on screen. Confirm completion
-      // in the background and redirect only if the server says finished.
       if (
         localFirst &&
         normalizeEmail(localFirst.email) === email &&
@@ -265,6 +513,73 @@ export default function QuizClient({ email }: { email: string }) {
           if (creds?.status === "completed") {
             persistResolvedCredentials(creds);
             goResults();
+            return;
+          }
+
+          // Hydrate current question + deadline from server.
+          const res = await fetch(
+            `/api/progress?pid=${encodeURIComponent(localFirst.pid)}&token=${encodeURIComponent(localFirst.token)}`
+          );
+          if (res.ok && !cancelled) {
+            const data = (await res.json()) as ProgressResponse;
+            if (data.blocked || data.status === "blocked") {
+              setBlocked(true);
+              return;
+            }
+            if (data.status === "completed") {
+              goResults();
+              return;
+            }
+            if (typeof data.tabSwitches === "number") {
+              setTabLeaveCount(data.tabSwitches);
+              tabCountRef.current = data.tabSwitches;
+            }
+            const savedAnswers: Record<string, string> = {};
+            for (const qid of Object.keys(data.answers ?? {})) {
+              savedAnswers[qid] = data.answers[qid].answer;
+            }
+            setAnswers(savedAnswers);
+            answersRef.current = savedAnswers;
+            if (data.quizStartedAt) {
+              setQuizStarted(true);
+              const idx = Number(data.currentQuestionIndex ?? 0);
+              setQuestionIndex(idx);
+              questionIndexRef.current = idx;
+              if (data.deadlineAt) {
+                setDeadlineAt(data.deadlineAt);
+                deadlineRef.current = data.deadlineAt;
+              } else {
+                // Re-arm deadline.
+                const qs = await fetch("/api/question-start", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    pid: localFirst.pid,
+                    token: localFirst.token,
+                  }),
+                });
+                if (qs.ok) {
+                  const qb = (await qs.json()) as {
+                    questionIndex?: number;
+                    deadlineAt?: string | null;
+                    remainingMs?: number;
+                    done?: boolean;
+                  };
+                  if (qb.done) {
+                    goResults();
+                    return;
+                  }
+                  if (typeof qb.questionIndex === "number") {
+                    setQuestionIndex(qb.questionIndex);
+                    questionIndexRef.current = qb.questionIndex;
+                  }
+                  if (qb.deadlineAt) {
+                    setDeadlineAt(qb.deadlineAt);
+                    deadlineRef.current = qb.deadlineAt;
+                  }
+                }
+              }
+            }
           }
         } catch {
           // Stay on quiz with local session.
@@ -279,7 +594,11 @@ export default function QuizClient({ email }: { email: string }) {
         return;
       }
 
-      if (creds.blocked || creds.status === "blocked" || isTabBlocked(creds.tabSwitches)) {
+      if (
+        creds.blocked ||
+        creds.status === "blocked" ||
+        isTabBlocked(creds.tabSwitches)
+      ) {
         persistResolvedCredentials(creds);
         setBlocked(true);
         return;
@@ -301,22 +620,10 @@ export default function QuizClient({ email }: { email: string }) {
         return;
       }
 
-      if (local && normalizeEmail(local.email) === email && local.pid && local.token) {
-        setPid(local.pid);
-        setToken(local.token);
-        if (Object.keys(local.answers).length > 0) {
-          setAnswers(local.answers);
-        }
-        setReady(true);
-        scheduleSync();
-        return;
-      }
-
       if (local && normalizeEmail(local.email) !== email) {
         clearSession();
       }
 
-      // Show questions immediately — hydrate saved answers from progress after.
       setReady(true);
 
       try {
@@ -329,6 +636,11 @@ export default function QuizClient({ email }: { email: string }) {
           return;
         }
         if (cancelled) return;
+
+        if (data.blocked || data.status === "blocked") {
+          setBlocked(true);
+          return;
+        }
 
         if (data.status === "completed") {
           persistResolvedCredentials({
@@ -346,20 +658,14 @@ export default function QuizClient({ email }: { email: string }) {
           return;
         }
 
-        setRestartNotice(data.restarted);
-
         const savedAnswers: Record<string, string> = {};
-        for (const qid of Object.keys(data.answers)) {
+        for (const qid of Object.keys(data.answers ?? {})) {
           savedAnswers[qid] = data.answers[qid].answer;
         }
-        const hasAnswers = Object.keys(savedAnswers).length > 0;
-        const startedMs = data.quizStartedAt
-          ? new Date(data.quizStartedAt).getTime()
-          : hasAnswers
-            ? Date.now()
-            : null;
-        if (startedMs) setQuizStarted(true);
-        else setQuizStarted(false);
+        const hasProgress =
+          Object.keys(savedAnswers).length > 0 || Boolean(data.quizStartedAt);
+        if (hasProgress) setQuizStarted(true);
+
         const existing = loadSession();
         saveSession({
           pid: creds.pid,
@@ -386,10 +692,47 @@ export default function QuizClient({ email }: { email: string }) {
           score: data.score?.totalScore ?? null,
           completionTimeSeconds: data.score?.completionTimeSeconds ?? null,
           completedAt: data.score?.completedAt ?? null,
-          quizStartedAt: startedMs,
-          tabSwitches: existing?.tabSwitches ?? 0,
+          quizStartedAt: data.quizStartedAt
+            ? new Date(data.quizStartedAt).getTime()
+            : null,
+          tabSwitches: data.tabSwitches ?? existing?.tabSwitches ?? 0,
         });
         setAnswers(savedAnswers);
+        answersRef.current = savedAnswers;
+        if (typeof data.tabSwitches === "number") {
+          setTabLeaveCount(data.tabSwitches);
+          tabCountRef.current = data.tabSwitches;
+        }
+        if (hasProgress) {
+          const idx = Number(data.currentQuestionIndex ?? 0);
+          setQuestionIndex(idx);
+          questionIndexRef.current = idx;
+          if (data.deadlineAt) {
+            setDeadlineAt(data.deadlineAt);
+            deadlineRef.current = data.deadlineAt;
+          } else {
+            const qs = await fetch("/api/question-start", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pid: creds.pid, token: creds.token }),
+            });
+            if (qs.ok) {
+              const qb = (await qs.json()) as {
+                questionIndex?: number;
+                deadlineAt?: string | null;
+                remainingMs?: number;
+              };
+              if (typeof qb.questionIndex === "number") {
+                setQuestionIndex(qb.questionIndex);
+                questionIndexRef.current = qb.questionIndex;
+              }
+              if (qb.deadlineAt) {
+                setDeadlineAt(qb.deadlineAt);
+                deadlineRef.current = qb.deadlineAt;
+              }
+            }
+          }
+        }
         scheduleSync();
       } catch {
         if (!cancelled) setError("Network error. Please refresh to retry.");
@@ -401,155 +744,223 @@ export default function QuizClient({ email }: { email: string }) {
   }, [email, linkResults]);
 
   useEffect(() => {
-    if (!ready || !quizStarted || !firstUnansweredRef.current) return;
-    firstUnansweredRef.current.scrollIntoView({
-      behavior: "smooth",
-      block: "center",
-    });
-  }, [ready, quizStarted]);
-
-  useEffect(() => {
     if (!ready || !quizStarted) return;
     prefetchStandings();
   }, [ready, quizStarted]);
 
-  const startQuiz = useCallback(async () => {
-    if (starting || quizStarted) return;
-    setStarting(true);
-    const startedAt = Date.now();
-    const session = loadSession();
-    if (session) {
-      saveSession({ ...session, quizStartedAt: startedAt });
-    }
-    setQuizStarted(true);
+  // If the quiz UI is open but we have no server deadline (resume / failed start),
+  // arm the current question so the 30s timer always runs.
+  useEffect(() => {
+    if (!ready || !quizStarted || deadlineAt || !pid || !token) return;
+    if (submittingRef.current) return;
 
-    if (pid && token) {
+    let cancelled = false;
+    (async () => {
       try {
-        const res = await fetch("/api/quiz-start", {
+        const res = await fetch("/api/question-start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pid, token }),
         });
-        if (res.ok) {
-          const body = (await res.json()) as { quizStartedAt?: string | null };
-          if (body.quizStartedAt) {
-            const serverMs = new Date(body.quizStartedAt).getTime();
-            const cur = loadSession();
-            if (cur && !Number.isNaN(serverMs)) {
-              saveSession({ ...cur, quizStartedAt: serverMs });
-            }
-          }
+        const body = (await res.json()) as {
+          error?: string;
+          blocked?: boolean;
+          completed?: boolean;
+          done?: boolean;
+          questionIndex?: number;
+          deadlineAt?: string | null;
+          remainingMs?: number;
+        };
+        if (cancelled) return;
+        if (res.status === 403 || body.blocked) {
+          setBlocked(true);
+          return;
+        }
+        if (res.status === 409 || body.completed || body.done) {
+          window.location.replace(linkResults);
+          return;
+        }
+        if (!res.ok) {
+          // Last resort: local display timer so the UI isn't stuck on "—"
+          const localDeadline = new Date(
+            Date.now() + QUESTION_TIME_LIMIT_SECONDS * 1000
+          ).toISOString();
+          setDeadlineAt(localDeadline);
+          deadlineRef.current = localDeadline;
+          setRemainingSeconds(QUESTION_TIME_LIMIT_SECONDS);
+          setSaveError(
+            body.error ??
+              "Could not sync timer with server. Using local countdown."
+          );
+          return;
+        }
+        if (typeof body.questionIndex === "number") {
+          setQuestionIndex(body.questionIndex);
+          questionIndexRef.current = body.questionIndex;
+        }
+        if (body.deadlineAt) {
+          setDeadlineAt(body.deadlineAt);
+          deadlineRef.current = body.deadlineAt;
+          setRemainingSeconds(
+            typeof body.remainingMs === "number"
+              ? Math.ceil(body.remainingMs / 1000)
+              : remainingSecondsUntil(body.deadlineAt)
+          );
         }
       } catch {
-        // Local start time still applies if the API is slow.
+        if (cancelled) return;
+        const localDeadline = new Date(
+          Date.now() + QUESTION_TIME_LIMIT_SECONDS * 1000
+        ).toISOString();
+        setDeadlineAt(localDeadline);
+        deadlineRef.current = localDeadline;
+        setRemainingSeconds(QUESTION_TIME_LIMIT_SECONDS);
       }
-    }
-    setStarting(false);
-  }, [starting, quizStarted, pid, token]);
+    })();
 
-  const submit = useCallback(() => {
-    if (submittingRef.current) return;
-    submittingRef.current = true;
-    setSaveError("");
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, quizStarted, deadlineAt, pid, token, linkResults]);
 
-    const session = loadSession();
-    const startedAt =
-      session?.quizStartedAt ?? session?.registeredAt ?? Date.now();
-    const completedAt = new Date();
-    const completionTimeSeconds = quizElapsedSeconds(
-      startedAt,
-      completedAt.getTime()
-    );
-    const apiPid = session?.pid ?? pid;
-    const apiToken = session?.token ?? token;
-    const answerStr = allAnswersString(answers);
-
-    saveSession({
-      pid: apiPid,
-      token: apiToken,
-      name: session?.name ?? "",
-      email: session?.email ?? email,
-      phone: session?.phone ?? "",
-      workExperience: session?.workExperience ?? "",
-      domain: session?.domain ?? "",
-      linkedinUrl: session?.linkedinUrl ?? "",
-      collegeName: session?.collegeName ?? "",
-      bestDescribeYou: session?.bestDescribeYou ?? "",
-      considerMasters: session?.considerMasters ?? "",
-      planningYear: session?.planningYear ?? "",
-      interestsMost: session?.interestsMost ?? "",
-      registeredAt: session?.registeredAt ?? Date.now(),
-      quizStartedAt: startedAt,
-      registered: session?.registered ?? false,
-      answers,
-      syncedAnswerString: session?.syncedAnswerString ?? "",
-      completed: true,
-      submitted: false,
-      score: null,
-      completionTimeSeconds,
-      completedAt: completedAt.toISOString(),
-    });
-
-    // Score on the server only (answer key never ships to the browser).
-    // Kick off scoring, then navigate — results page retries if this is slow.
-    void fetch("/api/score", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pid: apiPid,
-        token: apiToken,
-        answers: answerStr,
-      }),
-    })
-      .then(async (res) => {
-        if (!res.ok) return;
-        const body = (await res.json()) as { totalScore?: number };
-        const totalScore = Number(body.totalScore);
-        const cur = loadSession();
-        if (cur && !Number.isNaN(totalScore)) {
-          saveSession({ ...cur, score: totalScore });
-        }
-      })
-      .catch(() => {
-        // Results page will score via /api/score if this fails.
-      });
-
-    scheduleSync();
-    router.replace(linkResults);
-  }, [answers, pid, token, email, router, linkResults]);
-
+  // Per-question countdown from server deadline.
   useEffect(() => {
-    if (!ready || !quizStarted) return;
+    if (!ready || !quizStarted || !deadlineAt) return;
 
     const tick = () => {
-      const session = loadSession();
-      const startedAt = session?.quizStartedAt;
-      if (!startedAt) return;
-
-      const remaining = quizRemainingSeconds(startedAt);
+      const remaining = remainingSecondsUntil(deadlineRef.current);
       setRemainingSeconds(remaining);
-
+      const index = questionIndexRef.current;
       if (
         remaining <= 0 &&
-        !timeExpiredRef.current &&
+        timedOutForIndexRef.current !== index &&
+        !savingRef.current &&
         !submittingRef.current
       ) {
-        timeExpiredRef.current = true;
-        setTimeExpired(true);
-        submit();
+        timedOutForIndexRef.current = index;
+        void submitCurrentQuestion({ timedOut: true });
       }
     };
 
     tick();
-    const id = window.setInterval(tick, 1000);
+    const id = window.setInterval(tick, 250);
     return () => window.clearInterval(id);
-  }, [ready, quizStarted, submit]);
+  }, [ready, quizStarted, deadlineAt, submitCurrentQuestion]);
+
+  const startQuiz = useCallback(async () => {
+    if (starting || quizStarted) return;
+    setStarting(true);
+    setSaveError("");
+
+    if (!pid || !token) {
+      setSaveError("Missing session. Please re-open from your registration link.");
+      setStarting(false);
+      return;
+    }
+
+    // Show a countdown immediately; replace with server deadline when it arrives.
+    const optimisticDeadline = new Date(
+      Date.now() + QUESTION_TIME_LIMIT_SECONDS * 1000
+    ).toISOString();
+    setDeadlineAt(optimisticDeadline);
+    deadlineRef.current = optimisticDeadline;
+    setRemainingSeconds(QUESTION_TIME_LIMIT_SECONDS);
+    setQuizStarted(true);
+
+    try {
+      const res = await fetch("/api/quiz-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pid, token }),
+      });
+      const body = (await res.json()) as {
+        error?: string;
+        blocked?: boolean;
+        alreadyCompleted?: boolean;
+        quizStartedAt?: string | null;
+        questionIndex?: number;
+        deadlineAt?: string | null;
+        remainingMs?: number;
+      };
+
+      if (res.status === 403 || body.blocked) {
+        setBlocked(true);
+        setStarting(false);
+        return;
+      }
+      if (!res.ok) {
+        setSaveError(body.error ?? "Could not start quiz.");
+        // Keep optimistic timer running so the quiz is usable.
+        setStarting(false);
+        return;
+      }
+      if (body.alreadyCompleted) {
+        window.location.replace(linkResults);
+        return;
+      }
+
+      const startedMs = body.quizStartedAt
+        ? new Date(body.quizStartedAt).getTime()
+        : Date.now();
+      const session = loadSession();
+      if (session) {
+        saveSession({ ...session, quizStartedAt: startedMs });
+      }
+
+      if (typeof body.questionIndex === "number") {
+        setQuestionIndex(body.questionIndex);
+        questionIndexRef.current = body.questionIndex;
+      }
+      if (body.deadlineAt) {
+        setDeadlineAt(body.deadlineAt);
+        deadlineRef.current = body.deadlineAt;
+        setRemainingSeconds(
+          typeof body.remainingMs === "number"
+            ? Math.ceil(body.remainingMs / 1000)
+            : remainingSecondsUntil(body.deadlineAt)
+        );
+      } else {
+        // quiz-start succeeded but no deadline — arm via question-start
+        const qs = await fetch("/api/question-start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pid, token }),
+        });
+        if (qs.ok) {
+          const qb = (await qs.json()) as {
+            questionIndex?: number;
+            deadlineAt?: string | null;
+            remainingMs?: number;
+          };
+          if (typeof qb.questionIndex === "number") {
+            setQuestionIndex(qb.questionIndex);
+            questionIndexRef.current = qb.questionIndex;
+          }
+          if (qb.deadlineAt) {
+            setDeadlineAt(qb.deadlineAt);
+            deadlineRef.current = qb.deadlineAt;
+            setRemainingSeconds(
+              typeof qb.remainingMs === "number"
+                ? Math.ceil(qb.remainingMs / 1000)
+                : remainingSecondsUntil(qb.deadlineAt)
+            );
+          }
+        }
+      }
+    } catch {
+      setSaveError("Network error — timer is running locally.");
+    } finally {
+      setStarting(false);
+    }
+  }, [starting, quizStarted, pid, token, linkResults]);
 
   const answer = useCallback(
     (questionId: string, option: string) => {
+      if (savingRef.current || submittingRef.current) return;
       const question = questions.find((item) => item.id === questionId);
-      const need = question ? selectCountFor(question) : 1;
-      const prev = answers[questionId] ?? "";
+      if (!question) return;
+      const need = selectCountFor(question);
+      const prev = answersRef.current[questionId] ?? "";
 
       let nextValue = option;
       if (need > 1) {
@@ -562,19 +973,14 @@ export default function QuizClient({ email }: { email: string }) {
         return;
       }
 
-      setAnswers((a) => {
-        const next = { ...a };
-        if (nextValue) next[questionId] = nextValue;
-        else delete next[questionId];
-        return next;
-      });
+      const nextAnswers = { ...answersRef.current };
+      if (nextValue) nextAnswers[questionId] = nextValue;
+      else delete nextAnswers[questionId];
+      setAnswers(nextAnswers);
+      answersRef.current = nextAnswers;
       setSaveError("");
 
       const session = loadSession();
-      const nextAnswers = { ...(session?.answers ?? answers) };
-      if (nextValue) nextAnswers[questionId] = nextValue;
-      else delete nextAnswers[questionId];
-
       if (session) {
         saveSession({
           ...session,
@@ -582,36 +988,17 @@ export default function QuizClient({ email }: { email: string }) {
           registeredAt: session.registeredAt ?? Date.now(),
           registered: session.registered ?? false,
         });
-      } else {
-        saveSession({
-          pid,
-          token,
-          name: "",
-          email,
-          phone: "",
-          workExperience: "",
-          domain: "",
-          linkedinUrl: "",
-          collegeName: "",
-          bestDescribeYou: "",
-          considerMasters: "",
-          planningYear: "",
-          interestsMost: "",
-          registeredAt: Date.now(),
-          registered: false,
-          answers: nextAnswers,
-          syncedAnswerString: "",
-          completed: false,
-          submitted: false,
-          score: null,
-          completionTimeSeconds: null,
-          completedAt: null,
-        });
       }
 
-      scheduleSync();
+      // Single-select: auto-submit immediately. Multi-select: when complete.
+      if (isQuestionAnswered(question, nextValue)) {
+        void submitCurrentQuestion({
+          timedOut: false,
+          answerOverride: nextValue,
+        });
+      }
     },
-    [answers, email, pid, token]
+    [submitCurrentQuestion]
   );
 
   if (blocked) {
@@ -652,10 +1039,10 @@ export default function QuizClient({ email }: { email: string }) {
               Ready to take the challenge?
             </h1>
             <p className="mt-4 text-sm leading-relaxed text-slate-300 sm:text-base">
-              You have {QUIZ_TIME_LIMIT_MINUTES} minutes to answer{" "}
-              {TOTAL_QUESTIONS} questions. Your timer will start as soon as you
-              click &ldquo;Take the Challenge&rdquo; and will continue running
-              until you submit.
+              You will see one question at a time. Each question has{" "}
+              {QUESTION_TIME_LIMIT_SECONDS} seconds. The timer resets when you
+              move to the next question. If time runs out, that question is
+              submitted automatically (blank if unanswered) and you advance.
             </p>
             <p className="mt-4 text-sm font-medium text-slate-200 sm:text-base">
               A few things to keep in mind before you start:
@@ -670,8 +1057,7 @@ export default function QuizClient({ email }: { email: string }) {
                 windows may lead to disqualification.
               </li>
               <li>
-                If you do not submit within {QUIZ_TIME_LIMIT_MINUTES} minutes,
-                your answers will be submitted automatically.
+                Copying and pasting is disabled and attempted activity is logged.
               </li>
               <li>
                 Your score and completion time will be recorded for the
@@ -682,9 +1068,9 @@ export default function QuizClient({ email }: { email: string }) {
                 time will determine the higher rank.
               </li>
             </ul>
-            <p className="mt-4 text-sm leading-relaxed text-slate-300 sm:text-base">
-              Make sure you&apos;re ready before you begin.
-            </p>
+            {saveError && (
+              <p className="mt-4 text-sm text-red-300">{saveError}</p>
+            )}
             <button
               type="button"
               onClick={() => void startQuiz()}
@@ -699,32 +1085,32 @@ export default function QuizClient({ email }: { email: string }) {
     );
   }
 
-  const answeredCount = questions.filter((q) =>
-    isQuestionAnswered(q, answers[q.id])
-  ).length;
-  const allComplete = answeredCount === TOTAL_QUESTIONS;
-  const progressPct = Math.round((answeredCount / TOTAL_QUESTIONS) * 100);
-  const firstUnansweredId = questions.find(
-    (q) => !isQuestionAnswered(q, answers[q.id])
-  )?.id;
-  const incompleteNumbers = questions
-    .map((q, i) => (isQuestionAnswered(q, answers[q.id]) ? null : i + 1))
-    .filter((n): n is number => n !== null);
-
-  const jumpToIncomplete = () => {
-    firstUnansweredRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "center",
-    });
-  };
+  const q = questions[questionIndex] ?? questions[0]!;
+  const selected = answers[q.id] ?? "";
+  const need = selectCountFor(q);
+  const picked = normalizeChoice(selected).length;
+  const progressPct = Math.round(
+    ((questionIndex + (saving ? 0.5 : 0)) / TOTAL_QUESTIONS) * 100
+  );
   const activeTabWarning = tabSwitchWarning(tabLeaveCount);
+  const urgent =
+    remainingSeconds !== null && remainingSeconds <= 5;
 
   return (
     <div
       className="quiz-nocopy flex min-h-dvh flex-col"
-      onCopy={(e) => e.preventDefault()}
-      onCut={(e) => e.preventDefault()}
-      onPaste={(e) => e.preventDefault()}
+      onCopy={(e) => {
+        e.preventDefault();
+        logIntegrity(pid, token, "copy");
+      }}
+      onCut={(e) => {
+        e.preventDefault();
+        logIntegrity(pid, token, "cut");
+      }}
+      onPaste={(e) => {
+        e.preventDefault();
+        logIntegrity(pid, token, "paste");
+      }}
       onContextMenu={(e) => e.preventDefault()}
       onDragStart={(e) => e.preventDefault()}
     >
@@ -739,9 +1125,7 @@ export default function QuizClient({ email }: { email: string }) {
             <p id="quiz-tab-warning-title" className="quiz-tab-warning-title">
               {activeTabWarning.title}
             </p>
-            <p className="quiz-tab-warning-body">
-              {activeTabWarning.body}
-            </p>
+            <p className="quiz-tab-warning-body">{activeTabWarning.body}</p>
             <button
               type="button"
               className="register-btn-primary"
@@ -757,114 +1141,81 @@ export default function QuizClient({ email }: { email: string }) {
           </div>
         </div>
       )}
-      {/* Sticky header */}
+
       <header className="sticky top-0 z-20 border-b border-white/10 bg-[#001426]/95 px-4 py-4 backdrop-blur-md sm:px-6">
-        <div className="mx-auto w-full max-w-6xl space-y-2">
+        <div className="mx-auto w-full max-w-3xl space-y-2">
           <div className="flex items-center justify-between gap-4">
             <p className="text-sm font-medium text-slate-300">
-              Questions answered
+              Question {questionIndex + 1} of {TOTAL_QUESTIONS}
             </p>
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <p className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                  Time left
-                </p>
-                <p
-                  className={`quiz-timer text-sm tabular-nums font-bold ${
-                    remainingSeconds !== null && remainingSeconds <= 300
-                      ? "quiz-timer--urgent"
-                      : ""
-                  }`}
-                >
-                  {remainingSeconds !== null
-                    ? formatQuizCountdown(remainingSeconds)
-                    : "—"}
-                </p>
-              </div>
-              <p className="text-sm tabular-nums text-white">
-                <span className="font-bold text-[#75BEE9]">{answeredCount}</span>
-                <span className="text-slate-500"> / {TOTAL_QUESTIONS}</span>
+            <div className="text-right">
+              <p className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                Time left
+              </p>
+              <p
+                className={`quiz-timer text-lg tabular-nums font-bold ${
+                  urgent ? "quiz-timer--urgent" : ""
+                }`}
+              >
+                {remainingSeconds !== null
+                  ? formatQuizCountdown(remainingSeconds)
+                  : "—"}
               </p>
             </div>
           </div>
           <div className="quiz-progress-track" aria-hidden="true">
             <div
               className="quiz-progress-fill"
-              style={{ width: `${progressPct}%` }}
+              style={{ width: `${Math.min(100, progressPct)}%` }}
             />
           </div>
         </div>
       </header>
 
-      {/* Scrollable questions */}
-      <main className="relative mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">
-        <div className="pointer-events-none absolute -top-24 right-0 h-72 w-72 rounded-full bg-[#0074C8]/15 blur-[110px]" />
-
-        {restartNotice && (
-          <p className="relative mb-4 rounded-lg border border-amber-300/20 bg-amber-950/50 px-3 py-2 text-sm text-amber-200">
-            More than 30 days passed since your last activity, so your previous
-            answers were cleared and you&apos;ve been restarted from question 1.
-          </p>
-        )}
-
+      <main className="relative mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:px-6">
         <div className="glass-panel relative rounded-2xl border border-white/10 px-5 py-7 sm:px-8 sm:py-9">
-          {questions.map((q, globalIndex) => {
-            const selected = answers[q.id] ?? "";
-            const need = selectCountFor(q);
-            const complete = isQuestionAnswered(q, selected);
-            const picked = normalizeChoice(selected).length;
-            const isFirstUnanswered = q.id === firstUnansweredId;
-            return (
-              <article
-                key={q.id}
-                id={`question-${q.id}`}
-                ref={isFirstUnanswered ? firstUnansweredRef : undefined}
-                className={`quiz-question-block${complete ? "" : " quiz-question-block--incomplete"}`}
-              >
-                <div className="flex items-start gap-3.5 sm:gap-4">
-                  <span className="quiz-q-badge" aria-hidden="true">
-                    {globalIndex + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <h2 className="quiz-q-text whitespace-pre-wrap">{q.text}</h2>
-                    {need > 1 && (
-                      <p className="mt-2 text-sm text-[#75BEE9]">
-                        Select {need} options ({picked}/{need})
-                      </p>
-                    )}
-                    <fieldset className="mt-5 space-y-2.5 border-0 p-0">
-                      <legend className="sr-only">
-                        Question {globalIndex + 1} options
-                      </legend>
-                      {Object.entries(q.options).map(([key, label]) => {
-                        if (!label) return null;
-                        const isSelected = normalizeChoice(selected).includes(key);
-                        return (
-                          <button
-                            key={key}
-                            type="button"
-                            role={need > 1 ? "checkbox" : "radio"}
-                            aria-checked={isSelected}
-                            onClick={() => answer(q.id, key)}
-                            className={`quiz-option ${
-                              isSelected ? "quiz-option-selected" : ""
-                            }`}
-                          >
-                            <span className="quiz-option-letter">
-                              {key.toUpperCase()}
-                            </span>
-                            <span className="min-w-0 flex-1 pt-px">
-                              {label}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </fieldset>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
+          <article className="quiz-question-block">
+            <div className="flex items-start gap-3.5 sm:gap-4">
+              <span className="quiz-q-badge" aria-hidden="true">
+                {questionIndex + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="quiz-q-text whitespace-pre-wrap">{q.text}</h2>
+                {need > 1 && (
+                  <p className="mt-2 text-sm text-[#75BEE9]">
+                    Select {need} options ({picked}/{need})
+                  </p>
+                )}
+                <fieldset className="mt-5 space-y-2.5 border-0 p-0">
+                  <legend className="sr-only">
+                    Question {questionIndex + 1} options
+                  </legend>
+                  {Object.entries(q.options).map(([key, label]) => {
+                    if (!label) return null;
+                    const isSelected = normalizeChoice(selected).includes(key);
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        role={need > 1 ? "checkbox" : "radio"}
+                        aria-checked={isSelected}
+                        disabled={saving}
+                        onClick={() => answer(q.id, key)}
+                        className={`quiz-option ${
+                          isSelected ? "quiz-option-selected" : ""
+                        }`}
+                      >
+                        <span className="quiz-option-letter">
+                          {key.toUpperCase()}
+                        </span>
+                        <span className="min-w-0 flex-1 pt-px">{label}</span>
+                      </button>
+                    );
+                  })}
+                </fieldset>
+              </div>
+            </div>
+          </article>
         </div>
 
         {saveError && (
@@ -872,40 +1223,10 @@ export default function QuizClient({ email }: { email: string }) {
             {saveError}
           </p>
         )}
-
-        {/* Spacer so content isn't hidden behind sticky footer */}
-        <div className="h-24" aria-hidden="true" />
+        {saving && (
+          <p className="mt-3 text-center text-sm text-slate-400">Saving…</p>
+        )}
       </main>
-
-      {/* Sticky footer with single submit */}
-      <footer className="sticky bottom-0 z-20 border-t border-white/10 bg-[#001426]/95 px-4 py-4 backdrop-blur-md sm:px-6">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4">
-          <p className="text-sm tabular-nums text-slate-400">
-            <span className="font-medium text-white">{answeredCount}</span>
-            <span> / {TOTAL_QUESTIONS} answered</span>
-            {!allComplete && incompleteNumbers.length > 0 && (
-              <>
-                <span className="mx-2 text-white/20">·</span>
-                <button
-                  type="button"
-                  onClick={jumpToIncomplete}
-                  className="text-[#fbbf24] hover:underline"
-                >
-                  Go to question {incompleteNumbers[0]}
-                </button>
-              </>
-            )}
-          </p>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!allComplete && !timeExpired}
-            className="cta-button-gradient shrink-0 rounded-lg px-8 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {timeExpired ? "Submitting…" : "Submit"}
-          </button>
-        </div>
-      </footer>
     </div>
   );
 }
