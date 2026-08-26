@@ -20,17 +20,32 @@ export function splitAnswerString(answerStr: string): string[] {
   return raw.split("").filter((ch) => /^[a-f]$/.test(ch));
 }
 
+/**
+ * Always exactly one slot per question, joined by `|`.
+ * Unanswered / timed-out empty slots stay as empty segments, e.g.
+ * `b||c|ab|||||||||||...` (26 parts for 26 questions).
+ */
+export function allAnswersString(answers: Record<string, string>): string {
+  return questions.map((q) => normalizeChoice(answers[q.id] ?? "")).join("|");
+}
+
+/** Normalize any answer blob to a full pipe string (pad/truncate to question count). */
+export function toFullPipeAnswerString(answerStr: string): string {
+  const parts = splitAnswerString(answerStr);
+  const answers: Record<string, string> = {};
+  for (let i = 0; i < questions.length; i++) {
+    answers[questions[i].id] = parts[i] ?? "";
+  }
+  return allAnswersString(answers);
+}
+
 export function answersFromString(answerStr: string): Record<string, string> {
   const parts = splitAnswerString(answerStr);
   const out: Record<string, string> = {};
-  for (let i = 0; i < parts.length && i < questions.length; i++) {
-    out[questions[i].id] = parts[i];
+  for (let i = 0; i < questions.length; i++) {
+    out[questions[i].id] = parts[i] ?? "";
   }
   return out;
-}
-
-export function allAnswersString(answers: Record<string, string>): string {
-  return questions.map((q) => normalizeChoice(answers[q.id] ?? "")).join("|");
 }
 
 export function selectCountFor(q: Question): number {

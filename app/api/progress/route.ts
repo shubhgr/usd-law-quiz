@@ -7,6 +7,7 @@ import {
   isValidAnswerPayload,
   normalizeChoice,
   splitAnswerString,
+  toFullPipeAnswerString,
 } from "@/lib/answerString";
 import { hasDatabaseUrl, query } from "@/lib/db";
 import { isPastDeadline } from "@/lib/quizTime";
@@ -400,6 +401,7 @@ export async function POST(request: Request) {
           ok: true,
           completed: true,
           ...result,
+          answers: answerStr,
         });
       }
 
@@ -416,14 +418,14 @@ export async function POST(request: Request) {
     }
 
     // --- Legacy full-string save (beacon / old client) ---
-    const normalized = answers.trim().toLowerCase();
-    if (!normalized) {
+    const normalized = toFullPipeAnswerString(answers.trim().toLowerCase());
+    if (!answers.trim()) {
       return NextResponse.json(
         { error: "questionId or answers is required" },
         { status: 400 }
       );
     }
-    if (!isValidAnswerPayload(normalized)) {
+    if (!isValidAnswerPayload(answers.trim().toLowerCase())) {
       return NextResponse.json({ error: "Invalid answer string" }, { status: 400 });
     }
     if (splitAnswerString(normalized).length > questions.length) {
@@ -434,16 +436,19 @@ export async function POST(request: Request) {
     }
 
     const parts = splitAnswerString(normalized);
-    for (let i = 0; i < parts.length; i++) {
+    for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
       if (!q) break;
       const existingMap = await loadResponseMap(pid);
       if (q.id in existingMap) continue;
+      const slot = parts[i] ?? "";
+      // Only write slots we know about from the pipe string (including empties once past first non-empty? — write all provided slots)
+      if (i >= parts.length && !slot) continue;
       await upsertQuestionResponse({
         pid,
         questionId: q.id,
-        answer: parts[i] ?? "",
-        timedOut: !(parts[i] ?? ""),
+        answer: slot,
+        timedOut: !slot,
         timeTakenMs: null,
         answeredAt: now,
       });
@@ -454,7 +459,12 @@ export async function POST(request: Request) {
 
     if (isAnswerStringComplete(answerStr) || parts.length >= questions.length) {
       const result = await finalizeAttempt(pid, now);
-      return NextResponse.json({ ok: true, completed: true, ...result });
+      return NextResponse.json({
+        ok: true,
+        completed: true,
+        ...result,
+        answers: answerStr,
+      });
     }
 
     await query(
@@ -462,15 +472,15 @@ export async function POST(request: Request) {
       [pid, now.toISOString()]
     );
 
-    return NextResponse.json({ ok: true, completed: false });
+    return NextResponse.json({ ok: true, completed: false, answers: answerStr });
   }
 
-  // Sheets fallback (legacy overall quiz).
-  const normalized = answers.trim().toLowerCase();
-  if (!normalized) {
+  // Sheets fallback (legacy overall quiz) — store the pipe string as sent.
+  const normalized = toFullPipeAnswerString(answers.trim().toLowerCase());
+  if (!answers.trim()) {
     return NextResponse.json({ error: "answers is required" }, { status: 400 });
   }
-  if (!isValidAnswerPayload(normalized)) {
+  if (!isValidAnswerPayload(answers.trim().toLowerCase())) {
     return NextResponse.json({ error: "Invalid answer string" }, { status: 400 });
   }
 
@@ -483,9 +493,10 @@ export async function POST(request: Request) {
         totalScore: result.totalScore,
         completionTimeSeconds: result.completionTimeSeconds,
         completedAt: result.completedAt,
+        answers: normalized,
       });
     }
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, answers: normalized });
   } catch (err) {
     const response = respondSheetsError(err);
     if (response) return response;

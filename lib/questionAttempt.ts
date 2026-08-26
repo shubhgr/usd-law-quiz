@@ -2,7 +2,7 @@ import "server-only";
 
 import { questions } from "./questions";
 import { scoreFromAnswerString } from "./answerKey";
-import { allAnswersString, normalizeChoice } from "./answerString";
+import { allAnswersString, normalizeChoice, toFullPipeAnswerString } from "./answerString";
 import { query } from "./db";
 import {
   QUESTION_TIME_LIMIT_SECONDS,
@@ -88,7 +88,8 @@ export function buildAnswerStringFromMap(
   for (const q of questions) {
     answers[q.id] = normalizeChoice(map[q.id]?.answer ?? "");
   }
-  return allAnswersString(answers);
+  // Always a full pipe string: one segment per question ("" = unanswered).
+  return toFullPipeAnswerString(allAnswersString(answers));
 }
 
 export async function rebuildAnswersBlob(pid: string): Promise<string> {
@@ -117,14 +118,18 @@ export async function armQuestionDeadline(
 
   if (sameIndex && attempt!.question_deadline) {
     const deadline = new Date(attempt!.question_deadline);
-    const started = attempt!.question_started_at
-      ? new Date(attempt!.question_started_at)
-      : new Date(deadline.getTime() - QUESTION_TIME_LIMIT_SECONDS * 1000);
-    return {
-      startedAt: started.toISOString(),
-      deadlineAt: deadline.toISOString(),
-      remainingMs: Math.max(0, deadline.getTime() - now.getTime()),
-    };
+    const remainingMs = Math.max(0, deadline.getTime() - now.getTime());
+    // Re-arm if the stored deadline already expired (prevents timeout cascades).
+    if (remainingMs > 500) {
+      const started = attempt!.question_started_at
+        ? new Date(attempt!.question_started_at)
+        : new Date(deadline.getTime() - QUESTION_TIME_LIMIT_SECONDS * 1000);
+      return {
+        startedAt: started.toISOString(),
+        deadlineAt: deadline.toISOString(),
+        remainingMs,
+      };
+    }
   }
 
   const started = now;

@@ -19,11 +19,23 @@ import {
   selectCountFor,
 } from "@/lib/answerString";
 import { isTabBlocked, TAB_SWITCH_LIMIT, tabSwitchWarning } from "@/lib/tabSwitch";
-import { formatQuizCountdown, remainingSecondsUntil } from "@/lib/quizTime";
+import { formatQuizCountdown, remainingMsUntil, remainingSecondsUntil } from "@/lib/quizTime";
 import { QUESTION_TIME_LIMIT_SECONDS } from "@/lib/config";
 import EmailBlocked from "@/components/EmailBlocked";
 
 const TOTAL_QUESTIONS = questions.length;
+
+function markSubmittedThrough(
+  answers: Record<string, string>,
+  currentIndex: number
+) {
+  const set = new Set<number>();
+  for (let i = 0; i < currentIndex; i++) set.add(i);
+  for (let i = 0; i < questions.length; i++) {
+    if (questions[i].id in answers) set.add(i);
+  }
+  return set;
+}
 
 interface ProgressResponse {
   pid: string;
@@ -45,19 +57,6 @@ interface ProgressResponse {
   deadlineAt?: string | null;
   tabSwitches?: number;
   blocked?: boolean;
-}
-
-function logIntegrity(
-  pid: string,
-  token: string,
-  eventType: "copy" | "cut" | "paste"
-) {
-  if (!pid || !token) return;
-  void fetch("/api/integrity", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pid, token, eventType }),
-  }).catch(() => undefined);
 }
 
 export default function QuizClient({ email }: { email: string }) {
@@ -132,10 +131,16 @@ export default function QuizClient({ email }: { email: string }) {
   const pendingTabWarningRef = useRef(false);
   const submittingRef = useRef(false);
   const inFlightIndexRef = useRef<number | null>(null);
+  const submittedIndexesRef = useRef<Set<number>>(new Set());
+  const advanceGraceUntilRef = useRef(0);
   const deadlineRef = useRef<string | null>(null);
   const questionIndexRef = useRef(0);
   const answersRef = useRef(answers);
-  const timedOutForIndexRef = useRef<number | null>(null);
+  const submitQuestionRef = useRef<
+    ((opts: { timedOut: boolean; answerOverride?: string }) => Promise<void>) | null
+  >(null);
+  const saveQueueRef = useRef(Promise.resolve());
+
 
   useEffect(() => {
     tabCountRef.current = tabLeaveCount;
@@ -162,13 +167,6 @@ export default function QuizClient({ email }: { email: string }) {
   }, []);
 
   useEffect(() => {
-    const blockAndLog = (type: "copy" | "cut" | "paste") => (e: Event) => {
-      e.preventDefault();
-      logIntegrity(pid, token, type);
-    };
-    const onCopy = blockAndLog("copy");
-    const onCut = blockAndLog("cut");
-    const onPaste = blockAndLog("paste");
     const block = (e: Event) => {
       e.preventDefault();
     };
@@ -181,30 +179,29 @@ export default function QuizClient({ email }: { email: string }) {
           key === "a" ||
           key === "p" ||
           key === "s" ||
-          key === "u")
+          key === "u" ||
+          key === "v")
       ) {
         e.preventDefault();
-        if (key === "c") logIntegrity(pid, token, "copy");
-        if (key === "x") logIntegrity(pid, token, "cut");
       }
     };
-    document.addEventListener("copy", onCopy);
-    document.addEventListener("cut", onCut);
-    document.addEventListener("paste", onPaste);
+    document.addEventListener("copy", block);
+    document.addEventListener("cut", block);
+    document.addEventListener("paste", block);
     document.addEventListener("contextmenu", block);
     document.addEventListener("dragstart", block);
     document.addEventListener("selectstart", block);
     document.addEventListener("keydown", blockKeys);
     return () => {
-      document.removeEventListener("copy", onCopy);
-      document.removeEventListener("cut", onCut);
-      document.removeEventListener("paste", onPaste);
+      document.removeEventListener("copy", block);
+      document.removeEventListener("cut", block);
+      document.removeEventListener("paste", block);
       document.removeEventListener("contextmenu", block);
       document.removeEventListener("dragstart", block);
       document.removeEventListener("selectstart", block);
       document.removeEventListener("keydown", blockKeys);
     };
-  }, [pid, token]);
+  }, []);
 
   useEffect(() => {
     if (!ready || !quizStarted) return;
@@ -323,19 +320,24 @@ export default function QuizClient({ email }: { email: string }) {
         });
         return;
       }
-      if (typeof body.nextQuestionIndex === "number") {
-        setQuestionIndex(body.nextQuestionIndex);
-        questionIndexRef.current = body.nextQuestionIndex;
-        timedOutForIndexRef.current = null;
-      }
-      if (body.deadlineAt) {
-        setDeadlineAt(body.deadlineAt);
-        deadlineRef.current = body.deadlineAt;
-        setRemainingSeconds(
+
+      // Only sync the deadline for the question we are already showing.
+      // Never jump forward/back from a stale server response (that caused Q1→Q5 skips).
+      if (
+        typeof body.nextQuestionIndex === "number" &&
+        body.nextQuestionIndex === questionIndexRef.current &&
+        body.deadlineAt
+      ) {
+        const serverRemaining =
           typeof body.remainingMs === "number"
-            ? Math.ceil(body.remainingMs / 1000)
-            : remainingSecondsUntil(body.deadlineAt)
-        );
+            ? body.remainingMs
+            : remainingMsUntil(body.deadlineAt);
+        // Ignore near-zero server remaining right after an advance (stale/expired arm).
+        if (serverRemaining >= 1500) {
+          setDeadlineAt(body.deadlineAt);
+          deadlineRef.current = body.deadlineAt;
+          setRemainingSeconds(Math.ceil(serverRemaining / 1000));
+        }
       }
     },
     [finishQuiz]
@@ -343,9 +345,9 @@ export default function QuizClient({ email }: { email: string }) {
 
   const advanceOptimistically = useCallback((fromIndex: number) => {
     const nextIndex = fromIndex + 1;
-    timedOutForIndexRef.current = null;
+    submittedIndexesRef.current.add(fromIndex);
+    advanceGraceUntilRef.current = Date.now() + 1500;
     if (nextIndex >= TOTAL_QUESTIONS) {
-      // Final question — wait for server score before leaving (handled by caller).
       return { done: true as const, nextIndex };
     }
     const localDeadline = new Date(
@@ -365,6 +367,7 @@ export default function QuizClient({ email }: { email: string }) {
       const index = questionIndexRef.current;
       const q = questions[index];
       if (!q) return;
+      if (submittedIndexesRef.current.has(index)) return;
       if (inFlightIndexRef.current === index) return;
 
       const apiPid = loadSession()?.pid ?? pid;
@@ -376,7 +379,10 @@ export default function QuizClient({ email }: { email: string }) {
           ? opts.answerOverride
           : answersRef.current[q.id] ?? "";
 
-      // Persist locally and move on immediately — don't wait on the network.
+      // Mark + advance UI immediately (one step only).
+      inFlightIndexRef.current = index;
+      submittedIndexesRef.current.add(index);
+
       const session = loadSession();
       if (session) {
         const nextAnswers = { ...session.answers };
@@ -391,130 +397,88 @@ export default function QuizClient({ email }: { email: string }) {
       }
 
       const optimistic = advanceOptimistically(index);
-      inFlightIndexRef.current = index;
       setSaveError("");
 
-      try {
-        const res = await fetch("/api/progress", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            pid: apiPid,
-            token: apiToken,
-            questionId: q.id,
-            questionIndex: index,
-            answer: answerValue,
-            timedOut: opts.timedOut,
-          }),
-        });
-        const body = (await res.json()) as {
-          error?: string;
-          blocked?: boolean;
-          completed?: boolean;
-          totalScore?: number;
-          completionTimeSeconds?: number;
-          completedAt?: string | null;
-          nextQuestionIndex?: number;
-          nextQuestionId?: string;
-          deadlineAt?: string | null;
-          remainingMs?: number;
-        };
+      // Serialize network writes so Q2 never races ahead of Q1 on the server.
+      saveQueueRef.current = saveQueueRef.current
+        .then(async () => {
+          const res = await fetch("/api/progress", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pid: apiPid,
+              token: apiToken,
+              questionId: q.id,
+              questionIndex: index,
+              answer: answerValue,
+              timedOut: opts.timedOut,
+            }),
+          });
+          const body = (await res.json()) as {
+            error?: string;
+            blocked?: boolean;
+            completed?: boolean;
+            totalScore?: number;
+            completionTimeSeconds?: number;
+            completedAt?: string | null;
+            nextQuestionIndex?: number;
+            deadlineAt?: string | null;
+            remainingMs?: number;
+          };
 
-        if (res.status === 403 || body.blocked) {
-          setBlocked(true);
-          return;
-        }
+          if (res.status === 403 || body.blocked) {
+            setBlocked(true);
+            return;
+          }
 
-        if (!res.ok) {
-          setSaveError(body.error ?? "Could not save answer. Retrying…");
-          if (res.status === 409) {
-            const qs = await fetch("/api/question-start", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ pid: apiPid, token: apiToken }),
-            });
-            if (qs.ok) {
-              const qb = (await qs.json()) as {
-                done?: boolean;
-                questionIndex?: number;
-                deadlineAt?: string | null;
-                remainingMs?: number;
-              };
-              if (qb.done) {
-                const sub = await fetch("/api/submit", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ pid: apiPid, token: apiToken }),
-                });
-                if (sub.ok) {
-                  const sb = (await sub.json()) as {
-                    totalScore?: number;
-                    completionTimeSeconds?: number;
-                    completedAt?: string | null;
-                  };
-                  finishQuiz(sb);
-                }
-              } else if (typeof qb.questionIndex === "number") {
-                applyAdvance({
-                  nextQuestionIndex: qb.questionIndex,
-                  deadlineAt: qb.deadlineAt,
-                  remainingMs: qb.remainingMs,
-                });
+          if (!res.ok) {
+            // Do not jump the UI on 409 — stay on the optimistic question.
+            if (res.status !== 409) {
+              setSaveError(body.error ?? "Could not save answer.");
+            }
+            return;
+          }
+
+          if (body.completed || optimistic.done) {
+            if (body.completed) {
+              applyAdvance(body);
+            } else {
+              const sub = await fetch("/api/submit", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ pid: apiPid, token: apiToken }),
+              });
+              if (sub.ok) {
+                const sb = (await sub.json()) as {
+                  totalScore?: number;
+                  completionTimeSeconds?: number;
+                  completedAt?: string | null;
+                };
+                finishQuiz(sb);
               }
             }
+            return;
           }
-          return;
-        }
 
-        if (body.completed || optimistic.done) {
-          if (body.completed) {
-            applyAdvance(body);
-          } else {
-            const sub = await fetch("/api/submit", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ pid: apiPid, token: apiToken }),
-            });
-            if (sub.ok) {
-              const sb = (await sub.json()) as {
-                totalScore?: number;
-                completionTimeSeconds?: number;
-                completedAt?: string | null;
-              };
-              finishQuiz(sb);
-            } else {
-              applyAdvance(body);
-            }
-          }
-          return;
-        }
-
-        // Sync server deadline onto the question we already showed.
-        if (
-          typeof body.nextQuestionIndex === "number" &&
-          body.nextQuestionIndex === questionIndexRef.current &&
-          body.deadlineAt
-        ) {
-          setDeadlineAt(body.deadlineAt);
-          deadlineRef.current = body.deadlineAt;
-          setRemainingSeconds(
-            typeof body.remainingMs === "number"
-              ? Math.ceil(body.remainingMs / 1000)
-              : remainingSecondsUntil(body.deadlineAt)
-          );
-        } else if (typeof body.nextQuestionIndex === "number") {
           applyAdvance(body);
-        }
-      } catch {
-        setSaveError("Network error — your answer is saved locally.");
-      } finally {
-        if (inFlightIndexRef.current === index) {
-          inFlightIndexRef.current = null;
-        }
-      }
+        })
+        .catch(() => {
+          setSaveError("Network error — your answer is saved locally.");
+        })
+        .finally(() => {
+          if (inFlightIndexRef.current === index) {
+            inFlightIndexRef.current = null;
+          }
+        });
+
+      await saveQueueRef.current;
     },
     [pid, token, applyAdvance, finishQuiz, advanceOptimistically]
   );
+
+  useEffect(() => {
+    submitQuestionRef.current = submitCurrentQuestion;
+  }, [submitCurrentQuestion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -602,6 +566,7 @@ export default function QuizClient({ email }: { email: string }) {
               const idx = Number(data.currentQuestionIndex ?? 0);
               setQuestionIndex(idx);
               questionIndexRef.current = idx;
+              submittedIndexesRef.current = markSubmittedThrough(savedAnswers, idx);
               if (data.deadlineAt) {
                 setDeadlineAt(data.deadlineAt);
                 deadlineRef.current = data.deadlineAt;
@@ -764,6 +729,7 @@ export default function QuizClient({ email }: { email: string }) {
           const idx = Number(data.currentQuestionIndex ?? 0);
           setQuestionIndex(idx);
           questionIndexRef.current = idx;
+          submittedIndexesRef.current = markSubmittedThrough(savedAnswers, idx);
           if (data.deadlineAt) {
             setDeadlineAt(data.deadlineAt);
             deadlineRef.current = data.deadlineAt;
@@ -880,7 +846,7 @@ export default function QuizClient({ email }: { email: string }) {
     };
   }, [ready, quizStarted, deadlineAt, pid, token, linkResults]);
 
-  // Per-question countdown from server deadline.
+  // Per-question countdown from deadline (stable callback via ref — avoids effect thrash).
   useEffect(() => {
     if (!ready || !quizStarted || !deadlineAt) return;
 
@@ -888,21 +854,18 @@ export default function QuizClient({ email }: { email: string }) {
       const remaining = remainingSecondsUntil(deadlineRef.current);
       setRemainingSeconds(remaining);
       const index = questionIndexRef.current;
-      if (
-        remaining <= 0 &&
-        timedOutForIndexRef.current !== index &&
-        inFlightIndexRef.current !== index &&
-        !submittingRef.current
-      ) {
-        timedOutForIndexRef.current = index;
-        void submitCurrentQuestion({ timedOut: true });
-      }
+      if (Date.now() < advanceGraceUntilRef.current) return;
+      if (remaining > 0) return;
+      if (submittedIndexesRef.current.has(index)) return;
+      if (inFlightIndexRef.current === index) return;
+      if (submittingRef.current) return;
+      void submitQuestionRef.current?.({ timedOut: true });
     };
 
     tick();
     const id = window.setInterval(tick, 250);
     return () => window.clearInterval(id);
-  }, [ready, quizStarted, deadlineAt, submitCurrentQuestion]);
+  }, [ready, quizStarted, deadlineAt]);
 
   const startQuiz = useCallback(async () => {
     if (starting || quizStarted) return;
@@ -922,6 +885,10 @@ export default function QuizClient({ email }: { email: string }) {
     setDeadlineAt(optimisticDeadline);
     deadlineRef.current = optimisticDeadline;
     setRemainingSeconds(QUESTION_TIME_LIMIT_SECONDS);
+    setQuestionIndex(0);
+    questionIndexRef.current = 0;
+    submittedIndexesRef.current = new Set();
+    advanceGraceUntilRef.current = Date.now() + 1500;
     setQuizStarted(true);
 
     try {
@@ -1011,54 +978,57 @@ export default function QuizClient({ email }: { email: string }) {
     }
   }, [starting, quizStarted, pid, token, linkResults]);
 
-  const answer = useCallback(
-    (questionId: string, option: string) => {
-      if (submittingRef.current) return;
-      const index = questionIndexRef.current;
-      if (inFlightIndexRef.current === index) return;
-      const question = questions.find((item) => item.id === questionId);
-      if (!question) return;
-      const need = selectCountFor(question);
-      const prev = answersRef.current[questionId] ?? "";
+  const answer = useCallback((questionId: string, option: string) => {
+    if (submittingRef.current) return;
+    const index = questionIndexRef.current;
+    if (submittedIndexesRef.current.has(index)) return;
+    if (inFlightIndexRef.current === index) return;
+    const question = questions.find((item) => item.id === questionId);
+    if (!question) return;
+    if (question.id !== questions[index]?.id) return;
+    const need = selectCountFor(question);
+    const prev = answersRef.current[questionId] ?? "";
 
-      let nextValue = option;
-      if (need > 1) {
-        const set = new Set(normalizeChoice(prev).split("").filter(Boolean));
-        if (set.has(option)) set.delete(option);
-        else if (set.size < need) set.add(option);
-        else return;
-        nextValue = [...set].sort().join("");
-      } else if (prev === option) {
-        return;
-      }
+    let nextValue = option;
+    if (need > 1) {
+      const set = new Set(normalizeChoice(prev).split("").filter(Boolean));
+      if (set.has(option)) set.delete(option);
+      else if (set.size < need) set.add(option);
+      else return;
+      nextValue = [...set].sort().join("");
+    } else if (prev === option) {
+      return;
+    }
 
-      const nextAnswers = { ...answersRef.current };
-      if (nextValue) nextAnswers[questionId] = nextValue;
-      else delete nextAnswers[questionId];
-      setAnswers(nextAnswers);
-      answersRef.current = nextAnswers;
-      setSaveError("");
+    const nextAnswers = { ...answersRef.current };
+    if (nextValue) nextAnswers[questionId] = nextValue;
+    else delete nextAnswers[questionId];
+    setAnswers(nextAnswers);
+    answersRef.current = nextAnswers;
+    setSaveError("");
 
-      const session = loadSession();
-      if (session) {
-        saveSession({
-          ...session,
-          answers: nextAnswers,
-          registeredAt: session.registeredAt ?? Date.now(),
-          registered: session.registered ?? false,
-        });
-      }
+    const session = loadSession();
+    if (session) {
+      saveSession({
+        ...session,
+        answers: nextAnswers,
+        registeredAt: session.registeredAt ?? Date.now(),
+        registered: session.registered ?? false,
+      });
+    }
+    // Selection only — user must click Submit (timer still auto-submits at 0).
+  }, []);
 
-      // Single-select: auto-submit immediately. Multi-select: when complete.
-      if (isQuestionAnswered(question, nextValue)) {
-        void submitCurrentQuestion({
-          timedOut: false,
-          answerOverride: nextValue,
-        });
-      }
-    },
-    [submitCurrentQuestion]
-  );
+  const submitSelected = useCallback(() => {
+    const index = questionIndexRef.current;
+    const q = questions[index];
+    if (!q) return;
+    if (!isQuestionAnswered(q, answersRef.current[q.id])) return;
+    void submitCurrentQuestion({
+      timedOut: false,
+      answerOverride: answersRef.current[q.id] ?? "",
+    });
+  }, [submitCurrentQuestion]);
 
   if (blocked) {
     return <EmailBlocked email={email} />;
@@ -1099,9 +1069,9 @@ export default function QuizClient({ email }: { email: string }) {
             </h1>
             <p className="mt-4 text-sm leading-relaxed text-slate-300 sm:text-base">
               You will see one question at a time. Each question has{" "}
-              {QUESTION_TIME_LIMIT_SECONDS} seconds. The timer resets when you
-              move to the next question. If time runs out, that question is
-              submitted automatically (blank if unanswered) and you advance.
+              {QUESTION_TIME_LIMIT_SECONDS} seconds. Select your answer, then
+              click Submit. If time runs out, the question is submitted
+              automatically (with your selection if any, otherwise blank).
             </p>
             <p className="mt-4 text-sm font-medium text-slate-200 sm:text-base">
               A few things to keep in mind before you start:
@@ -1115,9 +1085,7 @@ export default function QuizClient({ email }: { email: string }) {
                 Please stay on the challenge page throughout. Switching tabs or
                 windows may lead to disqualification.
               </li>
-              <li>
-                Copying and pasting is disabled and attempted activity is logged.
-              </li>
+              <li>Copying and pasting is disabled.</li>
               <li>
                 Your score and completion time will be recorded for the
                 leaderboard.
@@ -1148,6 +1116,7 @@ export default function QuizClient({ email }: { email: string }) {
   const selected = answers[q.id] ?? "";
   const need = selectCountFor(q);
   const picked = normalizeChoice(selected).length;
+  const canSubmit = isQuestionAnswered(q, selected);
   const progressPct = Math.round(((questionIndex + 1) / TOTAL_QUESTIONS) * 100);
   const activeTabWarning = tabSwitchWarning(tabLeaveCount);
   const urgent =
@@ -1156,18 +1125,9 @@ export default function QuizClient({ email }: { email: string }) {
   return (
     <div
       className="quiz-nocopy flex min-h-dvh flex-col"
-      onCopy={(e) => {
-        e.preventDefault();
-        logIntegrity(pid, token, "copy");
-      }}
-      onCut={(e) => {
-        e.preventDefault();
-        logIntegrity(pid, token, "cut");
-      }}
-      onPaste={(e) => {
-        e.preventDefault();
-        logIntegrity(pid, token, "paste");
-      }}
+      onCopy={(e) => e.preventDefault()}
+      onCut={(e) => e.preventDefault()}
+      onPaste={(e) => e.preventDefault()}
       onContextMenu={(e) => e.preventDefault()}
       onDragStart={(e) => e.preventDefault()}
     >
@@ -1272,6 +1232,24 @@ export default function QuizClient({ email }: { email: string }) {
               </div>
             </div>
           </article>
+        </div>
+
+        <div className="relative mt-6 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-slate-400">
+            {canSubmit
+              ? "Ready — click Submit to continue."
+              : need > 1
+                ? `Select ${need} options, then Submit.`
+                : "Select an answer, then Submit."}
+          </p>
+          <button
+            type="button"
+            onClick={submitSelected}
+            disabled={!canSubmit}
+            className="cta-button-gradient shrink-0 rounded-lg px-8 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Submit
+          </button>
         </div>
 
         {saveError && (
